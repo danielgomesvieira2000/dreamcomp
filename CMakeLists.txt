@@ -37,3 +37,19 @@ if(TARGET dream_render_vk)
   target_link_libraries(dreamcomp_core PUBLIC dream::render_vk)
   target_compile_definitions(dreamcomp_core PRIVATE DREAM_WITH_RENDERER)
 endif()
+
+# The launcher window players see before the game (docs/FRONTEND.md). Needs SDL3; a headless
+# build (no SDL3, or -DDREAMCOMP_FRONTEND=OFF) configures without it and starts the game directly.
+option(DREAMCOMP_FRONTEND "Build the RmlUi launcher (fetches FreeType, RmlUi and fonts)" ON)
+if(DREAMCOMP_FRONTEND)
+  find_package(SDL3 QUIET CONFIG)
+  # Only with the renderer: the launcher hands over to a windowed game, which a headless build
+  # (-DDREAM_RENDERER=OFF) cannot start.
+  if(SDL3_FOUND AND TARGET dream_render_vk)
+    include(cmake/DreamcompFrontend.cmake)
+    target_link_libraries(dreamcomp_core PUBLIC dreamcomp_frontend)
+    target_compile_definitions(dreamcomp_core PRIVATE DREAMCOMP_WITH_FRONTEND)
+  else()
+    message(STATUS "dreamcomp: no SDL3 or no renderer; the launcher is not built")
+  endif()
+endif()

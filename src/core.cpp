@@ -7,7 +7,12 @@
 //   --set KEY=VALUE                  override any setting for this run
 //   --save-settings                  write this run's overrides back to the settings file
 //   --settings FILE                  use FILE instead of the per-user settings file
-// Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md).
+//   --launcher / --no-launcher       open (or skip) the launcher window (docs/FRONTEND.md)
+//   --launcher-screenshot FILE.png   render the launcher's tabs to PNGs and exit
+//   --launcher-tab NAME              the tab to open / to capture
+//   --launcher-size WxH              the launcher window's size (default 1280x720)
+// Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md),
+// rumble (--rumble), mods (--mod, docs/MODS.md), aspect, fullscreen, scale.
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +24,10 @@
 #include "dream/runtime/system.h"
 #include "dreamcomp/port.h"
 #include "dreamcomp/settings.h"
+
+#ifdef DREAMCOMP_WITH_FRONTEND
+#include "dreamcomp/frontend.h"
+#endif
 
 #if __has_include("dream/render/vk/present.h") && defined(DREAM_WITH_RENDERER)
 #include "dream/render/vk/present.h"
@@ -59,6 +68,51 @@ std::string flag_value(const std::vector<std::string>& a, const char* f) {
         if (a[i] == f)
             return a[i + 1];
     return {};
+}
+
+// Removes every `f` (and its value when `takes_value`) so the engine never sees the flag.
+void drop_flag(std::vector<std::string>& a, const char* f, bool takes_value) {
+    for (std::size_t i = 1; i < a.size();) {
+        if (a[i] == f)
+            a.erase(a.begin() + static_cast<std::ptrdiff_t>(i),
+                    a.begin() + static_cast<std::ptrdiff_t>(std::min(a.size(), i + (takes_value ? 2 : 1))));
+        else
+            ++i;
+    }
+}
+
+// `rumble` (0-100, default 100) -> --rumble N; `mods = a,b` -> --mod <config dir>/mods/a ...
+// (first wins, docs/MODS.md). A flag the user passed wins over the setting.
+void add_input_and_mod_flags(std::vector<std::string>& args,
+                             const std::filesystem::path& config_dir) {
+    if (!has_flag(args, "--rumble") && !g_settings.get("rumble").empty()) {
+        args.push_back("--rumble");
+        args.push_back(std::to_string(std::clamp(g_settings.get_int("rumble", 100), 0, 100)));
+    }
+    if (has_flag(args, "--mod"))
+        return;
+    const std::string mods = g_settings.get("mods");
+    std::size_t at = 0;
+    while (at < mods.size()) {
+        std::size_t comma = mods.find(',', at);
+        if (comma == std::string::npos)
+            comma = mods.size();
+        std::string name = mods.substr(at, comma - at);
+        at = comma + 1;
+        const auto b = name.find_first_not_of(" \t");
+        if (b == std::string::npos)
+            continue;
+        name = name.substr(b, name.find_last_not_of(" \t") - b + 1);
+        const auto dir = config_dir / "mods" / name;
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) {
+            std::fprintf(stderr, "dreamcomp: mod %s: no folder %s\n", name.c_str(),
+                         dir.string().c_str());
+            continue;
+        }
+        args.push_back("--mod");
+        args.push_back(dir.string());
+    }
 }
 
 // Texture packs and dumps (docs/TEXTURE-PACKS.md). `texture_pack` names the pack directory;
@@ -112,6 +166,22 @@ public:
     void adjust_args(std::vector<std::string>& args) override {
         const bool bare = args.size() == 1;
         const std::string id = g_port && g_port->id ? g_port->id : "dreamcomp";
+        // Launcher flags are dreamcomp's alone: take them out before the engine parses.
+        const bool want_launcher = has_flag(args, "--launcher");
+        const char* env_nl = std::getenv("DREAMCOMP_NO_LAUNCHER");
+        const bool no_launcher =
+            has_flag(args, "--no-launcher") || (env_nl && *env_nl && *env_nl != '0');
+        const std::string shot = flag_value(args, "--launcher-screenshot");
+        const std::string shot_tab = flag_value(args, "--launcher-tab");
+        const std::string shot_size = flag_value(args, "--launcher-size");
+        drop_flag(args, "--launcher", false);
+        drop_flag(args, "--no-launcher", false);
+        drop_flag(args, "--launcher-screenshot", true);
+        drop_flag(args, "--launcher-tab", true);
+        drop_flag(args, "--launcher-size", true);
+        // Double-clicked, or the launcher asked for: the play path with the saved settings.
+        const bool play = bare || want_launcher;
+
         std::filesystem::path file = flag_value(args, "--settings");
         if (file.empty())
             if (const char* env = std::getenv("DREAMCOMP_SETTINGS"))
@@ -119,39 +189,6 @@ public:
         if (file.empty())
             file = default_config_dir(id) / "settings.ini";
         g_settings.load(file);
-        // `--set` is parsed after this, but the texture keys decide which engine flags to add
-        // here, so those two are applied now. parse_arg sets them again to the same value, and a
-        // setting only becomes dirty once, so --save-settings behaves as it does for any key.
-        for (std::size_t i = 1; i + 1 < args.size(); ++i) {
-            if (args[i] != "--set")
-                continue;
-            const std::string& kv = args[i + 1];
-            const auto eq = kv.find('=');
-            const std::string key = kv.substr(0, eq);
-            if (eq != std::string::npos &&
-                (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
-                 key == "fullscreen" || key == "scale"))
-                g_settings.set(key, kv.substr(eq + 1));
-        }
-        // The aspect flags decide the render target's shape, which the engine needs before it
-        // parses anything: apply them now too (parse_arg consumes them later).
-        for (std::size_t i = 1; i < args.size(); ++i) {
-            if (args[i] == "--widescreen")
-                g_settings.set("aspect", "16:9");
-            else if (args[i] == "--no-widescreen")
-                g_settings.set("aspect", "4:3");
-            else if (args[i] == "--aspect" && i + 1 < args.size())
-                g_settings.set("aspect", args[i + 1]);
-        }
-        add_texture_flags(args, g_settings.file().parent_path());
-        const float aspect = target_aspect();
-        if (aspect > 4.0f / 3.0f + 0.01f && g_port->widescreen_anamorphic &&
-            !has_flag(args, "--render-aspect")) {
-            args.push_back("--render-aspect");
-            args.push_back(std::to_string(aspect));
-        }
-        if (g_settings.get_bool("fullscreen", false) && !has_flag(args, "--fullscreen"))
-            args.push_back("--fullscreen");
 
         if (!has_flag(args, "--config")) {
             // A packaged port keeps its config next to the executable; a build tree one level up.
@@ -165,6 +202,45 @@ public:
                 }
             }
         }
+        // The launcher runs before anything is derived from the settings: Start saves the
+        // player's choices, and everything below builds the engine's flags from them.
+        if (!shot.empty() || (play && !no_launcher))
+            run_launcher(args, shot, shot_tab, shot_size);
+        // `--set` is parsed after this, but the texture keys decide which engine flags to add
+        // here, so those two are applied now. parse_arg sets them again to the same value, and a
+        // setting only becomes dirty once, so --save-settings behaves as it does for any key.
+        for (std::size_t i = 1; i + 1 < args.size(); ++i) {
+            if (args[i] != "--set")
+                continue;
+            const std::string& kv = args[i + 1];
+            const auto eq = kv.find('=');
+            const std::string key = kv.substr(0, eq);
+            if (eq != std::string::npos &&
+                (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
+                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods"))
+                g_settings.set(key, kv.substr(eq + 1));
+        }
+        // The aspect flags decide the render target's shape, which the engine needs before it
+        // parses anything: apply them now too (parse_arg consumes them later).
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--widescreen")
+                g_settings.set("aspect", "16:9");
+            else if (args[i] == "--no-widescreen")
+                g_settings.set("aspect", "4:3");
+            else if (args[i] == "--aspect" && i + 1 < args.size())
+                g_settings.set("aspect", args[i + 1]);
+        }
+        add_texture_flags(args, g_settings.file().parent_path());
+        add_input_and_mod_flags(args, g_settings.file().parent_path());
+        const float aspect = target_aspect();
+        if (aspect > 4.0f / 3.0f + 0.01f && g_port->widescreen_anamorphic &&
+            !has_flag(args, "--render-aspect")) {
+            args.push_back("--render-aspect");
+            args.push_back(std::to_string(aspect));
+        }
+        if (g_settings.get_bool("fullscreen", false) && !has_flag(args, "--fullscreen"))
+            args.push_back("--fullscreen");
+
         if (!has_flag(args, "--disc")) {
             const std::string disc = g_settings.get("disc");
             if (!disc.empty()) {
@@ -172,15 +248,25 @@ public:
                 args.push_back(disc);
             }
         }
-        if (bare) {
-            // Double-clicked: play, with the player's saved choices.
-            args.push_back("--window");
-            args.push_back("--scale");
-            args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
-            const std::string vmu = g_settings.get(
-                "vmu", (default_config_dir(id) / "vmu_a1.bin").string());
-            args.push_back("--vmu");
-            args.push_back(vmu);
+        if (play) {
+            // Double-clicked (or --launcher): play, with the player's saved choices. A flag given
+            // on the command line wins (the engine takes the last occurrence, so none is added).
+            if (!has_flag(args, "--window"))
+                args.push_back("--window");
+            if (!has_flag(args, "--scale")) {
+                args.push_back("--scale");
+                args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
+            }
+            if (!has_flag(args, "--vmu")) {
+                const std::string vmu = g_settings.get(
+                    "vmu", (default_config_dir(id) / "vmu_a1.bin").string());
+                // The engine creates a missing card, but not the folder it lives in, which on a
+                // first launch does not exist yet.
+                std::error_code ec;
+                std::filesystem::create_directories(std::filesystem::path(vmu).parent_path(), ec);
+                args.push_back("--vmu");
+                args.push_back(vmu);
+            }
         }
     }
 
@@ -211,6 +297,45 @@ public:
         return 0;
     }
 
+    // The launcher window (docs/FRONTEND.md). Quit ends the process; Start returns with the
+    // settings saved; a launcher that cannot open says why and the game starts as before.
+    static void run_launcher(const std::vector<std::string>& args, const std::string& shot,
+                             const std::string& tab, const std::string& size) {
+#ifdef DREAMCOMP_WITH_FRONTEND
+        frontend::LaunchContext ctx;
+        ctx.settings = &g_settings;
+        ctx.port = g_port;
+        ctx.config = flag_value(args, "--config");
+        ctx.exe_dir = exe_dir(args[0]);
+        ctx.screenshot = shot;
+        ctx.tab = tab;
+        if (const auto x = size.find('x'); x != std::string::npos) {
+            ctx.width = std::clamp(std::atoi(size.c_str()), 640, 7680);
+            ctx.height = std::clamp(std::atoi(size.c_str() + x + 1), 360, 4320);
+        }
+        std::string err;
+        const auto out = frontend::run_launcher(ctx, &err);
+        if (!shot.empty()) {
+            if (out == frontend::Outcome::Error)
+                std::fprintf(stderr, "launcher: %s\n", err.c_str());
+            std::fflush(stdout);
+            std::exit(out == frontend::Outcome::Error ? 1 : 0);
+        }
+        if (out == frontend::Outcome::Quit) {
+            std::fflush(stdout);
+            std::exit(0);
+        }
+        if (out == frontend::Outcome::Error)
+            std::fprintf(stderr, "launcher: %s; starting the game directly\n", err.c_str());
+#else
+        (void)args, (void)tab, (void)size;
+        if (!shot.empty()) {
+            std::fprintf(stderr, "launcher: this build has no launcher (SDL3 not found)\n");
+            std::exit(1);
+        }
+#endif
+    }
+
     void usage(std::FILE* out) override {
         std::fprintf(out,
                      "\ndreamcomp:\n"
@@ -221,10 +346,18 @@ public:
                      "  --set KEY=VALUE        override one setting for this run\n"
                      "  --save-settings        keep this run's overrides\n"
                      "  --settings FILE        settings file (default: %s)\n"
+                     "  --launcher             open the launcher window first (the default\n"
+                     "                         when started with no arguments)\n"
+                     "  --no-launcher          skip it (also DREAMCOMP_NO_LAUNCHER=1)\n"
+                     "  --launcher-screenshot FILE.png  write the launcher's tabs as PNGs, exit\n"
+                     "  --launcher-tab NAME    play, graphics, controls, enhancements or about\n"
+                     "  --launcher-size WxH    launcher window size (default 1280x720)\n"
+                     "  Settings rumble=0..100 and mods=a,b add --rumble and --mod\n"
+                     "  <settings dir>/mods/<name> (first wins).\n"
                      "  Settings texture_pack=DIR|off and dump_textures=true add --texture-pack\n"
                      "  and --dump-textures (default pack: <settings dir>/textures if present).\n"
-                     "  Started with no arguments, the game opens in a window with the saved\n"
-                     "  settings (disc, scale, memory card).\n",
+                     "  Started with no arguments, the launcher opens; Start Game plays in a\n"
+                     "  window with the saved settings (disc, scale, memory card).\n",
                      g_settings.file().string().c_str());
     }
 

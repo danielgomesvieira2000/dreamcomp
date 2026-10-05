@@ -28,6 +28,7 @@
 #include "dream/runtime/aica/aica.h"
 #include "dream/runtime/aica/rtc.h"
 #include "dream/runtime/gdrom/disc.h"
+#include "dream/runtime/gdrom/mod_disc.h"
 #include "dream/runtime/sha1.h"
 #include "dream/runtime/host_ext.h"
 #include "dream/runtime/hle/bios.h"
@@ -1099,6 +1100,9 @@ void usage(const char* argv0, std::FILE* out) {
         "                         file is read off this disc and checked against\n"
         "                         [disc] sha1_1st_read.\n"
         "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "  --mod DIR              serve DIR's files in place of the disc's (repeatable; the first\n"
+        "                         --mod providing a file wins; dreamcomp docs/MODS.md)\n"
+        "  --rumble N             controller rumble strength, 0 (off) to 100 percent (default)\n"
         "  --texture-pack DIR     replace textures with DIR/**/*_<hash>.png (with --window;\n"
         "                         dreamcomp docs/TEXTURE-PACKS.md)\n"
         "  --dump-textures DIR    write each distinct texture once as DIR/<w>x<h>_<fmt>_<hash>.png\n"
@@ -1211,6 +1215,10 @@ int main(int argc, char** argv) {
                                       // start on a synthetic one.
     const char* disc_override = nullptr;  // --disc FILE (dreamcomp): the image, overriding [disc]
     float render_aspect = 0.0f;           // --render-aspect A (dreamcomp): render target shape
+    // --mod DIR (dreamcomp, repeatable): file-replacement mod roots layered over the disc
+    // (gdrom/mod_disc.h); the first root providing a file wins.
+    std::vector<std::filesystem::path> mod_roots;
+    int rumble_percent = 100;  // --rumble N (dreamcomp): pad rumble strength, 0 = off
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
@@ -1320,6 +1328,10 @@ int main(int argc, char** argv) {
             flash_dump = argv[++i];
         } else if (!std::strcmp(argv[i], "--disc") && i + 1 < argc)
             disc_override = argv[++i];
+        else if (!std::strcmp(argv[i], "--mod") && i + 1 < argc)
+            mod_roots.emplace_back(argv[++i]);
+        else if (!std::strcmp(argv[i], "--rumble") && i + 1 < argc)
+            rumble_percent = std::clamp(std::atoi(argv[++i]), 0, 100);
         else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
@@ -1420,6 +1432,7 @@ int main(int argc, char** argv) {
     }
     (void)validation;
     (void)unthrottled;
+    (void)rumble_percent;
     (void)writeback;
 #endif
     dream::translator::GameConfig cfg;
@@ -1463,6 +1476,19 @@ int main(int argc, char** argv) {
     } else {
         std::fprintf(stderr, "cannot read %s\n", cfg.binary_path.string().c_str());
         return 2;
+    }
+    // dreamcomp: file-replacement mods. Applied after the boot file was read and verified, so
+    // the executable always comes from the disc this build was translated from.
+    if (!mod_roots.empty()) {
+        if (!disc) {
+            std::fprintf(stderr, "--mod needs a disc image (--disc or [disc] image)\n");
+            return 2;
+        }
+        std::string mod_log;
+        disc = dream::gdrom::ModDisc::wrap(std::move(disc), mod_roots, mod_log);
+        std::printf("%s", mod_log.c_str());
+        if (!mod_log.empty() && mod_log.back() != '\n')
+            std::printf("\n");
     }
 
     dream::System sys;
@@ -1782,6 +1808,9 @@ int main(int argc, char** argv) {
         live->bindings_path =
             bindings_file_set ? bindings_file : dream::render::vk::default_bindings_path();
         live->load_bindings();
+        live->window.rumble_scale = static_cast<float>(rumble_percent) / 100.0f;
+        if (rumble_percent != 100)
+            std::printf("rumble: %d%%\n", rumble_percent);
         rumble_fn = [&live](unsigned port, float strength, unsigned ms) {
             live->window.rumble(port, strength, ms);
         };

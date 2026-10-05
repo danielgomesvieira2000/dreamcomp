@@ -9,6 +9,7 @@
 | Runtime | `engine/runtime/` | Guest memory map, SH-4 context, scheduler, Holly interrupts, PVR2 TA/SPG, AICA + ARM7, GD-ROM and BIOS HLE, Maple, dev interpreter fallback | GPL-2.0 |
 | Renderer / window / audio | `engine/render/`, `engine/audio/` | Vulkan PVR2 renderer, presenter, SDL3 window + input, SDL3 audio sink | GPL-2.0 |
 | Launcher | `engine/runtime/boot/boot_main.cpp` | `main()`: flags, wiring, pacing, report | GPL-2.0 |
+| **Frontend** | `src/frontend/`, `frontend/` (`dreamcomp_frontend`, optional) | The launcher window players see first: disc check, settings, Start Game ([FRONTEND.md](FRONTEND.md)); RmlUi + FreeType fetched at configure time | GPL-2.0 (RmlUi MIT, FreeType FTL/GPL-2.0) |
 | **dreamcomp port layer** | `include/dreamcomp/`, `src/` (`dreamcomp_core`) | Launcher extension: settings, bare-launch defaults, widescreen, presentation; port API (`PortInfo`); hook macros | GPL-2.0 |
 | **Port** | `ports/<slug>/` (own repo) | `game/<id>.toml`, port sources (`PortInfo`, hooks, enhancements), docs | GPL-2.0 |
 
@@ -44,9 +45,23 @@ All callbacks run on the guest thread. The guest is single-threaded and determin
 ## Settings
 
 `Settings` (`include/dreamcomp/settings.h`) is a `key = value` file per port in the platform
-config directory. Keys in use: `disc`, `scale` (1-8), `aspect` (`4:3`, `16:9` default, `21:9`, `32:9`), `fullscreen`, `vmu`, `fit`
-(`letterbox|crop|stretch`, default `crop`), `texture_pack` (directory or `off`), `dump_textures`
-(`docs/TEXTURE-PACKS.md`). Command-line flags override for one run and are only
+config directory. The launcher ([FRONTEND.md](FRONTEND.md)) edits it and writes it on Apply /
+Start Game. Keys in use:
+
+| Key | Values (default) | Engine flag added by `src/core.cpp` |
+|---|---|---|
+| `disc` | image path | `--disc` |
+| `scale` | 1-8 (2) | `--scale` (launcher / bare launch) |
+| `aspect` | `4:3`, `16:9` (default), `21:9`, `32:9`; capped by `PortInfo::max_aspect` | `--render-aspect` (anamorphic ports) |
+| `fit` | `crop` (default), `letterbox`, `stretch` | presenter option |
+| `fullscreen` | `true`/`false` (false) | `--fullscreen` |
+| `vmu` | card path (`<config dir>/vmu_a1.bin`) | `--vmu` (launcher / bare launch) |
+| `rumble` | 0-100 (100); 0 = off | `--rumble N` |
+| `texture_pack` | directory, `off`, unset = `<settings dir>/textures` if present | `--texture-pack` ([TEXTURE-PACKS.md](TEXTURE-PACKS.md)) |
+| `dump_textures` | `true`/`false` | `--dump-textures <settings dir>/texture_dump` |
+| `mods` | `name1,name2` (first wins) | `--mod <settings dir>/mods/<name>` each ([MODS.md](MODS.md)) |
+
+Command-line flags override for one run and are only
 saved with `--save-settings`, so test runs never leave choices behind in the player's file.
 
 ## Why recompilation and not emulation
