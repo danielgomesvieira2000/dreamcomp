@@ -1138,6 +1138,9 @@ void usage(const char* argv0, std::FILE* out) {
     for (auto* e : dream::host::extensions()) e->usage(out);
 }
 
+// DREAM_PROFILE: host time spent drawing renders (dreamcomp).
+static std::uint64_t g_render_ns = 0, g_renders = 0;
+
 int main(int argc, char** argv) {
     // Extensions may rewrite the command line before it is parsed (host_ext.h). The rewritten
     // strings must outlive every pointer taken into them below, hence the statics.
@@ -1751,7 +1754,13 @@ int main(int argc, char** argv) {
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
             if (previous_render)
                 previous_render(stream);
+            const auto t0 = std::chrono::steady_clock::now();
             live->render(stream);
+            g_render_ns += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
+            ++g_renders;
         };
         // Real time, so the title runs at the speed it was written for. The guest clock is the
         // reference: sleep only while ahead of it, never speed anything up to catch up, because a
@@ -2052,6 +2061,13 @@ int main(int argc, char** argv) {
     const char* stop = "returned from the entry function";
     int rc = 0;
     sys.memory.refresh_fast_path();  // after the write hash / watch flags are final
+    // DREAM_PROFILE=1 (dreamcomp): host time per scheduler event and in rendering, printed after
+    // the report; the remainder is translated guest code, interrupt delivery and the HLE.
+    const bool host_profile = [] {
+        const char* e = std::getenv("DREAM_PROFILE");
+        return e && *e && *e != '0';
+    }();
+    sys.sched.profile = host_profile;
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     try {
@@ -2100,6 +2116,33 @@ int main(int argc, char** argv) {
     for (auto* e : dream::host::extensions()) e->on_stop(sys, stop);
     const double host_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (host_profile && host_s > 0.0) {
+        struct Row {
+            std::string name;
+            double s;
+            std::uint64_t calls;
+        };
+        std::vector<Row> rows;
+        double accounted = 0.0;
+        for (std::size_t i = 0; i < sys.sched.events(); ++i) {
+            const auto& st = sys.sched.stat(static_cast<int>(i));
+            if (!st.calls)
+                continue;
+            rows.push_back({sys.sched.name(static_cast<int>(i)), st.ns * 1e-9, st.calls});
+            accounted += st.ns * 1e-9;
+        }
+        if (g_renders) {
+            rows.push_back({"pvr render (TA list -> GPU)", g_render_ns * 1e-9, g_renders});
+            accounted += g_render_ns * 1e-9;
+        }
+        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.s > b.s; });
+        std::printf("host profile (%.2f s):\n", host_s);
+        for (const auto& r : rows)
+            std::printf("  %6.1f%%  %8.3f s  %10llu calls  %s\n", 100.0 * r.s / host_s, r.s,
+                        static_cast<unsigned long long>(r.calls), r.name.c_str());
+        std::printf("  %6.1f%%  %8.3f s  %10s        guest code, interrupts, HLE (the rest)\n",
+                    100.0 * (host_s - accounted) / host_s, host_s - accounted, "");
+    }
 #ifdef DREAM_DEV_INTERPRETER
     if (dream::devinterp::replay()) {
         dream::devinterp::set_replay(nullptr);

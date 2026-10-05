@@ -1,5 +1,6 @@
 #include "dream/runtime/sched/scheduler.h"
 
+#include <chrono>
 #include <utility>
 
 namespace dream::sched {
@@ -38,7 +39,30 @@ void Scheduler::advance_to(std::uint64_t target) {
         if (now_ < best)
             now_ = best;
         events_[idx].deadline = kNever;  // the callback may re-arm
-        events_[idx].cb(now_, late);
+        // Callbacks may throw (a closed window stops the run from the vblank event): the guard
+        // keeps the nesting depth right whatever leaves the callback.
+        struct Depth {
+            int& d;
+            explicit Depth(int& v) : d(++v) {}
+            ~Depth() { --d; }
+        } depth(depth_);
+        if (profile && depth_ == 1) {
+            const auto t0 = std::chrono::steady_clock::now();
+            struct Time {
+                Stat& st;
+                std::chrono::steady_clock::time_point t0;
+                ~Time() {
+                    st.ns += static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count());
+                    ++st.calls;
+                }
+            } time{events_[idx].stat, t0};
+            events_[idx].cb(now_, late);
+        } else {
+            events_[idx].cb(now_, late);
+        }
     }
     if (target > now_)
         now_ = target;

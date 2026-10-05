@@ -38,13 +38,25 @@ public:
     void advance_to(std::uint64_t target);
     void advance(std::uint64_t cycles) { advance_to(now_ + cycles); }
     const std::string& name(int id) const { return events_[static_cast<std::size_t>(id)].name; }
+    std::size_t events() const noexcept { return events_.size(); }
+
+    // Host-time profile per event (dreamcomp): with `profile` on, the wall time each event's
+    // callback takes is summed (outermost callback only, so nesting never double counts).
+    // Everything not inside a callback is translated guest code and the launcher loop.
+    bool profile = false;
+    struct Stat {
+        std::uint64_t ns = 0, calls = 0;
+    };
+    const Stat& stat(int id) const { return events_[static_cast<std::size_t>(id)].stat; }
 
 private:
     struct Event {
         std::string name;
         Callback cb;
         std::uint64_t deadline = kNever;
+        Stat stat;
     };
+    int depth_ = 0;
     std::vector<Event> events_;
     std::uint64_t now_ = 0;
 };
