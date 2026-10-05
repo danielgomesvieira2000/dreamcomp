@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the engine audit diffs against the subtree's squashed base commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/audit.py all
+
+  tests:
+    # Engine unit tests and the disc tooling, headless. No game data exists in CI by design:
+    # ports are built and played only on machines whose owner supplies a disc.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Configure
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" = "Windows" ]; then extra="-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl"; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDREAM_RENDERER=OFF $extra
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -R "unit|translator.version|translator.programs"
+      - name: Disc tooling tests
+        shell: bash
+        run: |
+          pip install -e "engine/tools/dcdisc[test]"
+          python -m pytest -q engine/tools/dcdisc

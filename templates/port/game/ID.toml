@@ -1,0 +1,20 @@
+# {{TITLE}} ({{REGION}}), {{PRODUCT}} {{VERSION}} -- dreamcomp game config.
+# Format: dreamcomp/engine/docs/game-config.md. Measured on the owner's disc; never commit disc data.
+
+[game]
+id = "{{ID}}"
+title = "{{TITLE}}"
+region = "{{REGION}}"
+product = "{{PRODUCT}}"
+
+[disc]
+sha1_1st_read = "{{SHA1}}"   # the boot file this config was measured against
+
+[binary]
+path = "extracted/fs/1ST_READ.BIN"   # written by tools/dc.py setup, git-ignored
+load_address = 0x8C010000
+link_address = 0x0C010000
+entry = 0x8C010000
+
+# [[relocations]] and [functions] extra: paste from --suggest-config, with a comment saying how
+# each was found. [hooks]: see dreamcomp docs/HOOKS.md.

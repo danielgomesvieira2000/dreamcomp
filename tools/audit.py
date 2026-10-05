@@ -127,7 +127,12 @@ def audit_docs(repo: str) -> list[str]:
         text = open(os.path.join(repo, rel), encoding="utf-8", errors="replace").read()
         for m in LINK.finditer(text):
             target = m.group(1).rstrip(".,:;)").split("#")[0].split(":")[0]
-            if not os.path.exists(os.path.join(repo, target)):
+            # Framework docs also name engine paths without the prefix and port-relative paths
+            # (docs/PLAN.md of "the port"), which the port template defines.
+            roots = [repo, os.path.join(repo, "engine"), os.path.join(repo, "templates", "port")]
+            if target.startswith("docs/") and os.path.isdir(os.path.join(repo, "engine")):
+                roots.append(os.path.join(repo, "engine"))
+            if not any(os.path.exists(os.path.join(r, target)) for r in roots):
                 findings.append(f"{rel}: references missing path {target}")
     skills = os.path.join(repo, ".claude", "skills")
     if os.path.isdir(skills):
