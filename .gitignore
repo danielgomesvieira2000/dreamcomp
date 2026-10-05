@@ -60,3 +60,6 @@ CLAUDE.local.md
 /shots/
 /traces/
 *.log
+
+# Third-party binaries fetched by tools/dc.py deps
+/.deps/

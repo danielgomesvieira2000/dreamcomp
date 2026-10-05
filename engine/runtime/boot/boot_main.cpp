@@ -25,6 +25,7 @@
 #include "dream/runtime/aica/aica.h"
 #include "dream/runtime/aica/rtc.h"
 #include "dream/runtime/gdrom/disc.h"
+#include "dream/runtime/sha1.h"
 #include "dream/runtime/hle/bios.h"
 #include "dream/runtime/holly/g2dma.h"
 #include "dream/runtime/holly/sysblock.h"
@@ -1063,6 +1064,10 @@ void usage(const char* argv0, std::FILE* out) {
         "  --bindings FILE        controller bindings; the default is one file per user, shared\n"
         "                         by every title. F1 (or a pad's select button) opens the screen\n"
         "                         that edits them, and writes them back here.\n"
+        "  --disc FILE            the disc image (.gdi, .cue or .chd) instead of the config's\n"
+        "                         [disc] image. Without an extracted [binary] path the boot\n"
+        "                         file is read off this disc and checked against\n"
+        "                         [disc] sha1_1st_read.\n"
         "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
         "  --flash FILE           a 128 KB console flash image; without it one is synthesised\n"
         "                         Created, blank and formatted, if the path does not exist. A "
@@ -1155,6 +1160,7 @@ int main(int argc, char** argv) {
                                       // some titles and not others: a title that reads the user's
                                       // settings out of the flash user partition may refuse to
                                       // start on a synthetic one.
+    const char* disc_override = nullptr;  // --disc FILE (dreamcomp): the image, overriding [disc]
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1257,7 +1263,9 @@ int main(int argc, char** argv) {
             flash_image = argv[++i];
         } else if (!std::strcmp(argv[i], "--dump-flash") && i + 1 < argc) {
             flash_dump = argv[++i];
-        } else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
+        } else if (!std::strcmp(argv[i], "--disc") && i + 1 < argc)
+            disc_override = argv[++i];
+        else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
             dump_ta_frame = std::strtoull(argv[++i], nullptr, 0);
@@ -1343,6 +1351,8 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::unique_ptr<dream::gdrom::Disc> disc;
+    if (disc_override)
+        cfg.disc_image = std::filesystem::path(disc_override);
     if (cfg.disc_image) {
         disc = dream::gdrom::open_disc(*cfg.disc_image, err);
         if (!disc) {
@@ -1350,12 +1360,32 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    std::ifstream in(cfg.binary_path, std::ios::binary);
-    if (!in) {
+    std::vector<char> bytes;
+    if (std::ifstream in{cfg.binary_path, std::ios::binary}) {
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    } else if (disc) {
+        // dreamcomp: no extracted copy beside the config, so take the boot file off the disc and
+        // refuse anything but the exact build this executable was translated from.
+        std::vector<std::uint8_t> boot;
+        std::string boot_name;
+        if (!dream::gdrom::read_root_file(*disc, "", boot, &boot_name)) {
+            std::fprintf(stderr, "disc: no boot file in the image's filesystem\n");
+            return 2;
+        }
+        const std::string sha = dream::sha1_hex(boot.data(), boot.size());
+        if (!cfg.sha1_1st_read.empty() && sha != cfg.sha1_1st_read) {
+            std::fprintf(stderr,
+                         "disc: %s has SHA-1 %s, but this build was made from %s.\n"
+                         "This is a different release or revision of the game; it cannot run "
+                         "here.\n",
+                         boot_name.c_str(), sha.c_str(), cfg.sha1_1st_read.c_str());
+            return 3;
+        }
+        bytes.assign(boot.begin(), boot.end());
+    } else {
         std::fprintf(stderr, "cannot read %s\n", cfg.binary_path.string().c_str());
         return 2;
     }
-    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 
     dream::System sys;
     dream::hle::Bios bios(sys);

@@ -55,6 +55,13 @@ protected:
     void finish_tracks();  // sorts, sets the disc type from the layout
 };
 
+// Reads one file from the root directory of the disc's ISO9660 filesystem (on a GD-ROM, the one in
+// the high-density area), case-insensitively and ignoring the ";1" version suffix. Also returns
+// the boot file name from IP.BIN when `name` is empty. False if the file is not there.
+// (dreamcomp addition: lets the launcher load the boot executable straight off the disc.)
+bool read_root_file(Disc& disc, std::string name, std::vector<std::uint8_t>& out,
+                    std::string* resolved_name = nullptr);
+
 // Opens by extension: .gdi, .cue (Redump GD-ROM layout) or .chd. Returns nullptr and sets `error` on failure.
 std::unique_ptr<Disc> open_disc(const std::filesystem::path& path, std::string& error);
 
