@@ -31,7 +31,7 @@ Entry gate: met (boots to menus on the engine).
 | Item | Plan | Status |
 |---|---|---|
 | Internal resolution | engine `--scale 1-4`; setting `scale` | works (engine) |
-| Widescreen (anamorphic) | `PortInfo::widescreen`, Flycast value for T1401N | prototyped; **gameplay crash at frame ~2272 under investigation** |
+| Widescreen (anamorphic) | `PortInfo::widescreen`; 16:9 / 21:9 / 32:9 at full resolution (`--render-aspect`) | done; crash was an emitter defect (fixed); no edge culling seen at 32:9 |
 | Widescreen HUD fix | per-frame sprite-depth rule (docs/HUD.md): HUD keeps its 4:3 proportions, centred | done for Soulcalibur; edge anchoring needs an inspector |
 | Texture dump / replacement packs | content hash (XXH64, scheme v1) over the raw VRAM bytes the decoder reads (+ used palette colours / VQ codebook); `--dump-textures DIR`, `--texture-pack DIR`; settings `dump_textures`, `texture_pack` (default `<config dir>/textures`); in-house PNG codec | works (Soulcalibur: dump + 1 replaced texture verified in-game); no manifest, no mip chain, no async preload yet. `docs/TEXTURE-PACKS.md` |
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |
