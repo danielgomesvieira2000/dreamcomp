@@ -22,8 +22,8 @@ Entry gate: met (boots to menus on the engine).
 | Music and effects play | done (0 → 12 key-ons in 1800 frames; RMS -13…-25 dBFS); **not yet listened to by Daniel** |
 | Reaches a fight; 0 untranslated targets over 60 s | 1 new target (`0x0C019FC0`) at ~frame 3000; interpreter covers it; seed pending |
 | Plays a full arcade run with no fault | not verified |
-| Saves to the per-user VMU and loads them | not verified |
-| Logo frame at boot (frame ~120) shows corrupted tiles | open defect |
+| Saves to the per-user VMU and loads them | done 2026-10-05: fresh card → "Successfully saved"; next boot → "Successfully loaded" (27 block reads) |
+| Intro (frames 60-200): checkered gaps in the green tile background | **unverified**: may be the original effect; needs comparison with real hardware / a reference video |
 | Daniel playtests and confirms | pending |
 
 ## P2 — Enhancements

@@ -19,7 +19,7 @@ endif()
 
 # Third-party binaries fetched by `tools/dc.py deps` land in .deps/; find them without flags.
 file(GLOB _dc_sdl3 LIST_DIRECTORIES true "${DREAMCOMP_ROOT}/.deps/SDL3-*/cmake")
-if(_dc_sdl3 AND NOT SDL3_DIR)
+if(WIN32 AND _dc_sdl3 AND NOT SDL3_DIR)
   list(GET _dc_sdl3 -1 _dc_sdl3)
   set(SDL3_DIR ${_dc_sdl3} CACHE PATH "SDL3 config directory")
 endif()
