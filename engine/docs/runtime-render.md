@@ -146,6 +146,14 @@ never update, which is a far worse failure than decoding one again. A polygon wh
 be decoded draws untextured rather than not at all, because a flat shape in the right place says
 more during bring-up than a hole does.
 
+**Dumps and replacement packs (dreamcomp).** With `--dump-textures DIR` or `--texture-pack DIR`, a
+cache miss also hashes the texture's raw video-memory bytes (`render/texture_pack.{h,cpp}`, scheme
+version 1, specified in dreamcomp's `docs/TEXTURE-PACKS.md`). The hash, not the cache key, is the
+identity, because the key holds an address and a streaming title reloads the same art elsewhere. A
+pack image is uploaded in place of the decoded pixels at its own resolution; the entry keeps the
+guest's `TextureInfo`, so palette-change and write-back invalidation treat it exactly like the
+original. Ranges the renderer wrote a frame into are never dumped or replaced.
+
 How a texture and the vertex colour combine is the TSP word's shading instruction: decal replaces
 the colour, modulate multiplies it, and the two "alpha" variants also use the vertex colour's
 alpha. The fragment shader takes it as a push constant rather than specialising the pipeline,

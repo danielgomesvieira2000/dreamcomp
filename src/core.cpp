@@ -7,6 +7,7 @@
 //   --set KEY=VALUE                  override any setting for this run
 //   --save-settings                  write this run's overrides back to the settings file
 //   --settings FILE                  use FILE instead of the per-user settings file
+// Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md).
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -59,6 +60,30 @@ std::string flag_value(const std::vector<std::string>& a, const char* f) {
     return {};
 }
 
+// Texture packs and dumps (docs/TEXTURE-PACKS.md). `texture_pack` names the pack directory;
+// unset, `<config dir>/textures` is used when it exists, and "off" turns packs off.
+// `dump_textures = true` writes every new texture to `<config dir>/texture_dump/`. The config dir
+// is the settings file's own directory, so `--settings` moves both with it. A flag the user passed
+// wins over the setting.
+void add_texture_flags(std::vector<std::string>& args, const std::filesystem::path& config_dir) {
+    if (!has_flag(args, "--texture-pack")) {
+        std::string pack = g_settings.get("texture_pack");
+        std::error_code ec;
+        if (pack.empty() && std::filesystem::is_directory(config_dir / "textures", ec))
+            pack = (config_dir / "textures").string();
+        if (pack == "off" || pack == "none" || pack == "false")
+            pack.clear();
+        if (!pack.empty()) {
+            args.push_back("--texture-pack");
+            args.push_back(pack);
+        }
+    }
+    if (!has_flag(args, "--dump-textures") && g_settings.get_bool("dump_textures", false)) {
+        args.push_back("--dump-textures");
+        args.push_back((config_dir / "texture_dump").string());
+    }
+}
+
 class Core final : public dream::host::Extension {
 public:
     const char* name() const override { return "dreamcomp"; }
@@ -73,6 +98,19 @@ public:
         if (file.empty())
             file = default_config_dir(id) / "settings.ini";
         g_settings.load(file);
+        // `--set` is parsed after this, but the texture keys decide which engine flags to add
+        // here, so those two are applied now. parse_arg sets them again to the same value, and a
+        // setting only becomes dirty once, so --save-settings behaves as it does for any key.
+        for (std::size_t i = 1; i + 1 < args.size(); ++i) {
+            if (args[i] != "--set")
+                continue;
+            const std::string& kv = args[i + 1];
+            const auto eq = kv.find('=');
+            const std::string key = kv.substr(0, eq);
+            if (eq != std::string::npos && (key == "texture_pack" || key == "dump_textures"))
+                g_settings.set(key, kv.substr(eq + 1));
+        }
+        add_texture_flags(args, g_settings.file().parent_path());
 
         if (!has_flag(args, "--config")) {
             // A packaged port keeps its config next to the executable; a build tree one level up.
@@ -144,6 +182,8 @@ public:
                      "  --set KEY=VALUE        override one setting for this run\n"
                      "  --save-settings        keep this run's overrides\n"
                      "  --settings FILE        settings file (default: %s)\n"
+                     "  Settings texture_pack=DIR|off and dump_textures=true add --texture-pack\n"
+                     "  and --dump-textures (default pack: <settings dir>/textures if present).\n"
                      "  Started with no arguments, the game opens in a window with the saved\n"
                      "  settings (disc, scale, memory card).\n",
                      g_settings.file().string().c_str());

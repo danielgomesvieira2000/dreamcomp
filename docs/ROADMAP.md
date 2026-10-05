@@ -33,7 +33,7 @@ Entry gate: met (boots to menus on the engine).
 | Internal resolution | engine `--scale 1-4`; setting `scale` | works (engine) |
 | Widescreen (anamorphic) | `PortInfo::widescreen`, Flycast value for T1401N | prototyped; **gameplay crash at frame ~2272 under investigation** |
 | Widescreen HUD fix | hooks on the 2D draw path, per game | not started |
-| Texture dump / replacement packs | content hash over raw VRAM texture bytes (+ palette/codebook), versioned; dump mode first; `mods/textures/<hash>.png` | not started (design: engine `docs/future-enhancements.md` §3) |
+| Texture dump / replacement packs | content hash (XXH64, scheme v1) over the raw VRAM bytes the decoder reads (+ used palette colours / VQ codebook); `--dump-textures DIR`, `--texture-pack DIR`; settings `dump_textures`, `texture_pack` (default `<config dir>/textures`); in-house PNG codec | works (Soulcalibur: dump + 1 replaced texture verified in-game); no manifest, no mip chain, no async preload yet. `docs/TEXTURE-PACKS.md` |
 | Mods: file replacement | virtual disc layer that serves `mods/files/<path>` in place of disc files, re-laying out ISO9660 extents | not started |
 | Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
 | Higher frame rate | frame generation (engine study: reprojection, 35 days); game logic stays at 60 | research |

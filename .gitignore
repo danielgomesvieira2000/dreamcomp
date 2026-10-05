@@ -21,6 +21,9 @@
 *.nrg
 
 # Anything extracted or derived from a disc
+# (texture dumps and packs are the game's art: docs/TEXTURE-PACKS.md)
+texture_dump/
+texture_packs/
 /work/
 extracted/
 *.BIN

@@ -1072,6 +1072,9 @@ void usage(const char* argv0, std::FILE* out) {
         "                         file is read off this disc and checked against\n"
         "                         [disc] sha1_1st_read.\n"
         "  --vmu FILE             a 128 KB memory-card image; writes are saved back to it.\n"
+        "  --texture-pack DIR     replace textures with DIR/**/*_<hash>.png (with --window;\n"
+        "                         dreamcomp docs/TEXTURE-PACKS.md)\n"
+        "  --dump-textures DIR    write each distinct texture once as DIR/<w>x<h>_<fmt>_<hash>.png\n"
         "  --flash FILE           a 128 KB console flash image; without it one is synthesised\n"
         "                         Created, blank and formatted, if the path does not exist. A "
         "file\n"
@@ -1203,6 +1206,9 @@ int main(int argc, char** argv) {
     std::set<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...] (list: dreamcomp)
     std::uint64_t capture_at = 0;
     unsigned scale = 1;
+    // --texture-pack DIR / --dump-textures DIR (dreamcomp): replacement packs and the dump that
+    // authors them, both keyed by the content hash in render/texture_pack.h.
+    std::string texture_pack, dump_textures;
     // --rtc-seed N: a fixed console clock, so two runs of the same build do the same thing and can
     // be compared. Any non-zero value will do; the number itself only changes the date a title
     // shows.
@@ -1338,7 +1344,11 @@ int main(int argc, char** argv) {
             log_from = std::strtoull(spec, nullptr, 0);
             if (const char* colon = std::strchr(spec, ':'))
                 log_count = std::strtoull(colon + 1, nullptr, 0);
-        } else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc)
+        } else if (!std::strcmp(argv[i], "--texture-pack") && i + 1 < argc)
+            texture_pack = argv[++i];
+        else if (!std::strcmp(argv[i], "--dump-textures") && i + 1 < argc)
+            dump_textures = argv[++i];
+        else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc)
             scale = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) {
             usage(argv[0], stdout);
@@ -1670,6 +1680,26 @@ int main(int argc, char** argv) {
                 cfg.title.empty() ? std::string("Dream Recomp") : cfg.title + " - Dream Recomp")) {
             std::fprintf(stderr, "window: %s\n", live->error.c_str());
             return 2;
+        }
+        auto& replacer = live->renderer.textures().replacer();
+        if (!texture_pack.empty()) {
+            std::string err;
+            const auto t0 = std::chrono::steady_clock::now();
+            if (replacer.open_pack(texture_pack, &err))
+                std::printf("texture pack: %s, %zu textures (indexed in %.1f ms)\n",
+                            texture_pack.c_str(), replacer.pack_size(),
+                            std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - t0)
+                                .count());
+            else
+                std::fprintf(stderr, "texture pack: %s\n", err.c_str());
+        }
+        if (!dump_textures.empty()) {
+            std::string err;
+            if (replacer.set_dump_dir(dump_textures, &err))
+                std::printf("texture dump: writing new textures to %s\n", dump_textures.c_str());
+            else
+                std::fprintf(stderr, "texture dump: %s\n", err.c_str());
         }
         // After the window, because resolving a binding's name to a code needs SDL initialised.
         live->bindings_path =
@@ -2083,6 +2113,12 @@ int main(int argc, char** argv) {
             static_cast<unsigned long long>(live->written_back), live->renderer.textures().decoded,
             live->renderer.textures().failed, live->renderer.textures().overwritten,
             static_cast<unsigned long long>(live->palette_changes));
+        if (const auto& r = live->renderer.textures().replacer(); r.active())
+            std::printf(
+                "textures: %llu hashed (%.1f ms), %u replaced from the pack (%u failed to load, "
+                "%.1f ms loading), %u dumped (%.1f ms writing)\n",
+                static_cast<unsigned long long>(r.hashed), r.hash_ms, r.replaced,
+                r.replace_failed, r.load_ms, r.dumped, r.dump_ms);
         if (live->have_frame)
             std::printf("window: last shown %s\n", live->shown.describe().c_str());
         // Vulkan objects are destroyed now rather than at scope exit, while everything they were

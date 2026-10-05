@@ -1,6 +1,9 @@
 // See texture_cache.h.
 #include "dream/render/vk/texture_cache.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 
 #include "dream/render/tsp.h"
@@ -89,6 +92,13 @@ bool TextureCache::set_palette(const std::uint32_t* palette_ram, PaletteFormat f
 std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t end) {
     if (!ctx_ || !ctx_->device() || end <= begin)
         return 0;
+    // Remembered so a render target is never dumped or replaced: its content is a frame, and
+    // every frame would be a new texture.
+    if (replacer_.active() &&
+        std::find(written_ranges_.begin(), written_ranges_.end(), std::make_pair(begin, end)) ==
+            written_ranges_.end() &&
+        written_ranges_.size() < 64)
+        written_ranges_.emplace_back(begin, end);
     std::vector<std::uint64_t> doomed;
     for (const auto& [key, e] : entries_) {
         const std::uint32_t lo = e.info.address;
@@ -138,8 +148,17 @@ VkSampler TextureCache::sampler_for(std::uint32_t tsp, bool tiled) {
     return sampler;
 }
 
-bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::uint32_t>& pixels) {
-    const VkDeviceSize bytes = pixels.size() * 4;
+bool TextureCache::rendered_into(const TextureInfo& info) const {
+    const std::uint32_t lo = info.address, hi = info.address + info.size_bytes();
+    for (const auto& [begin, end] : written_ranges_)
+        if (lo < end && begin < hi)
+            return true;
+    return false;
+}
+
+bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::uint32_t>& pixels,
+                          std::uint32_t width, std::uint32_t height) {
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
     if (!e.staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
         return false;
     e.staging.write(pixels.data(), static_cast<std::size_t>(bytes));
@@ -148,7 +167,7 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
     ici.format = VK_FORMAT_R8G8B8A8_UNORM;
-    ici.extent = {e.info.width, e.info.height, 1};
+    ici.extent = {width, height, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -186,7 +205,7 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
 
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {e.info.width, e.info.height, 1};
+    copy.imageExtent = {width, height, 1};
     vkCmdCopyBufferToImage(cmd, e.staging.handle(), e.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            1, &copy);
 
@@ -228,13 +247,45 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         entries_.emplace(key, std::move(e));  // remember the failure so it is not retried per frame
         return VK_NULL_HANDLE;
     }
-    std::vector<std::uint32_t> pixels;
-    if (!decode_texture(e.info, vram_, vram_size_, palette_, pixels)) {
-        ++failed;
-        entries_.emplace(key, std::move(e));
-        return VK_NULL_HANDLE;
+    // Pack and dump: the identity is a content hash, worked out only when either is on.
+    std::uint64_t hash = 0;
+    bool hashed = false;
+    const png::Image* replacement = nullptr;
+    if (replacer_.active() && !rendered_into(e.info)) {
+        const auto t0 = std::chrono::steady_clock::now();
+        hashed = texture_hash(e.info, vram_, vram_size_, palette_, hash);
+        replacer_.hash_ms +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        replacer_.hashed += hashed ? 1u : 0u;
+        if (hashed && replacer_.replacing()) {
+            replacement = replacer_.find(e.info, hash);
+            const std::uint32_t limit = ctx_->caps().max_texture_size;
+            if (replacement && limit &&
+                (replacement->width > limit || replacement->height > limit)) {
+                std::fprintf(stderr, "texture pack: %ux%u is larger than this GPU allows (%u)\n",
+                             replacement->width, replacement->height, limit);
+                replacement = nullptr;
+            }
+        }
     }
-    if (!upload(cmd, e, pixels)) {
+    std::vector<std::uint32_t> pixels;
+    if (!replacement || replacer_.dumping()) {
+        if (!decode_texture(e.info, vram_, vram_size_, palette_, pixels)) {
+            ++failed;
+            entries_.emplace(key, std::move(e));
+            return VK_NULL_HANDLE;
+        }
+        if (hashed)
+            replacer_.dump(e.info, hash, pixels);
+    }
+    const bool uploaded =
+        replacement
+            ? upload(cmd, e, replacement->pixels, replacement->width, replacement->height)
+            : upload(cmd, e, pixels, e.info.width, e.info.height);
+    if (replacement && uploaded)
+        ++replacer_.replaced;
+    if (!uploaded) {
         ++failed;
         entries_.emplace(key, std::move(e));
         return VK_NULL_HANDLE;
@@ -277,7 +328,7 @@ VkDescriptorSet TextureCache::fallback(VkCommandBuffer cmd) {
     fallback_.info.width = 1;
     fallback_.info.height = 1;
     const std::vector<std::uint32_t> white{0xFFFFFFFFu};
-    if (!upload(cmd, fallback_, white))
+    if (!upload(cmd, fallback_, white, 1, 1))
         return VK_NULL_HANDLE;
     fallback_.sampler = sampler_for(0, false);
     VkDescriptorSetAllocateInfo dsai{};

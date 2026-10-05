@@ -39,6 +39,8 @@ MAGIC = [
     (0, b"CRID", "Sofdec/CRI container"),
     (0, b"\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00", "raw CD sector (sync pattern)"),
 ]
+# A texture dumped by --dump-textures, or a pack file named after one (docs/TEXTURE-PACKS.md).
+DUMPED_TEXTURE = re.compile(r".*_[0-9a-fA-F]{16}\.png$", re.IGNORECASE)
 SIZE_LIMIT = 2 * 1024 * 1024  # anything larger must be on the allow-list
 # Paths that may legitimately hold binaries (fonts/icons we made or that are licensed, test fixtures
 # synthesised by the tests themselves).
@@ -75,6 +77,9 @@ def audit_assets(repo: str, staged_only: bool) -> list[str]:
         base = os.path.basename(rel).upper()
         if base in ("1ST_READ.BIN", "IP.BIN") or re.match(r".*\(TRACK \d+\)\.BIN$", base):
             findings.append(f"{rel}: disc boot file or track")
+            continue
+        if DUMPED_TEXTURE.match(os.path.basename(rel)):
+            findings.append(f"{rel}: named like a dumped game texture (texture packs are never committed)")
             continue
         try:
             size = os.path.getsize(path)

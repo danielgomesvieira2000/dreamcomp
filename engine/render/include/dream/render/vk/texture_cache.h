@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "dream/render/texture.h"
+#include "dream/render/texture_pack.h"
 #include "dream/render/vk/context.h"
 #include "dream/render/vk/resources.h"
 
@@ -70,6 +71,12 @@ public:
     std::uint32_t overwritten = 0;
     const std::string& error() const noexcept { return error_; }
 
+    // Texture dumping and replacement packs (dreamcomp, texture_pack.h). Inactive unless the
+    // launcher opened a pack or set a dump directory. A replaced texture is an ordinary entry
+    // with different pixels: it is keyed, invalidated by a palette change or a write-back, and
+    // freed exactly as the decoded one would be, and the next decode looks it up again.
+    TextureReplacer& replacer() noexcept { return replacer_; }
+
 private:
     // HostBuffer owns a mapping, so an Entry moves but never copies.
     struct Entry {
@@ -90,7 +97,13 @@ private:
 
     void free_entry(Entry& e);
     VkSampler sampler_for(std::uint32_t tsp, bool tiled);
-    bool upload(VkCommandBuffer cmd, Entry& entry, const std::vector<std::uint32_t>& pixels);
+    // `width` x `height` is the image uploaded, which for a pack replacement is not the guest's
+    // size; `entry.info` keeps the guest's, which is what invalidation needs.
+    bool upload(VkCommandBuffer cmd, Entry& entry, const std::vector<std::uint32_t>& pixels,
+                std::uint32_t width, std::uint32_t height);
+    // True when the texture's bytes overlap a region the renderer has written a frame into: a
+    // render to texture, whose content changes every frame and is never dumped or replaced.
+    bool rendered_into(const TextureInfo& info) const;
 
     Context* ctx_ = nullptr;
     VkDescriptorSetLayout layout_ = VK_NULL_HANDLE;
@@ -102,6 +115,8 @@ private:
     std::size_t vram_size_ = 0;
     std::uint32_t palette_[1024]{};
     std::string error_;
+    TextureReplacer replacer_;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> written_ranges_;
 };
 
 }  // namespace dream::render::vk
