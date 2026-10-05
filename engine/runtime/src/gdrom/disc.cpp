@@ -1,4 +1,5 @@
 #include "dream/runtime/gdrom/disc.h"
+#include "dream/runtime/gdrom/mod_disc.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -448,9 +449,6 @@ bool read_root_file(Disc& disc, std::string name, std::vector<std::uint8_t>& out
     if (!hd)
         return false;
     std::uint8_t sec[kUserBytes];
-    auto le32 = [](const std::uint8_t* p) {
-        return static_cast<std::uint32_t>(p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24);
-    };
     auto upper = [](std::string s) {
         for (auto& ch : s) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         return s;
@@ -462,41 +460,21 @@ bool read_root_file(Disc& disc, std::string name, std::vector<std::uint8_t>& out
         while (!name.empty() && (name.back() == ' ' || name.back() == '\0')) name.pop_back();
     }
     name = upper(name);
-    if (!disc.read_user(hd->lba + 16, sec) || std::memcmp(sec + 1, "CD001", 5) != 0)
+    std::vector<IsoEntry> files;
+    if (!list_iso9660(disc, files))
         return false;
-    const std::uint32_t root_ext = le32(sec + 156 + 2), root_size = le32(sec + 156 + 10);
-    // Extents are absolute LBAs on most images and frame addresses (LBA + 150) on some rips:
-    // take whichever reading makes the root's "." record point at itself.
-    std::int64_t fix = -1;
-    for (std::int64_t cand : {std::int64_t{0}, -std::int64_t{kFadOffset}}) {
-        if (disc.read_user(static_cast<std::uint32_t>(root_ext + cand), sec) &&
-            le32(sec + 2) == root_ext) {
-            fix = cand;
-            break;
+    for (const auto& e : files) {
+        if (e.dir || upper(e.path) != name)
+            continue;
+        out.resize(e.size);
+        for (std::uint32_t done = 0; done < e.size; done += kUserBytes) {
+            if (!disc.read_user(e.lba + done / kUserBytes, sec))
+                return false;
+            std::memcpy(out.data() + done, sec, std::min<std::uint32_t>(kUserBytes, e.size - done));
         }
-    }
-    if (fix == -1)
-        return false;
-    for (std::uint32_t off = 0; off < root_size; off += kUserBytes) {
-        if (!disc.read_user(static_cast<std::uint32_t>(root_ext + fix + off / kUserBytes), sec))
-            return false;
-        for (std::uint32_t pos = 0; pos < kUserBytes && sec[pos] != 0; pos += sec[pos]) {
-            const std::uint8_t* r = sec + pos;
-            std::string rec(reinterpret_cast<const char*>(r + 33), r[32]);
-            rec = upper(rec.substr(0, rec.find(';')));
-            if (rec != name || (r[25] & 2))
-                continue;
-            const std::uint32_t ext = le32(r + 2), size = le32(r + 10);
-            out.resize(size);
-            for (std::uint32_t done = 0; done < size; done += kUserBytes) {
-                if (!disc.read_user(static_cast<std::uint32_t>(ext + fix + done / kUserBytes), sec))
-                    return false;
-                std::memcpy(out.data() + done, sec, std::min<std::uint32_t>(kUserBytes, size - done));
-            }
-            if (resolved_name)
-                *resolved_name = name;
-            return true;
-        }
+        if (resolved_name)
+            *resolved_name = name;
+        return true;
     }
     return false;
 }

@@ -247,9 +247,14 @@ public:
         out << "    [[maybe_unused]] const std::uint32_t entry_pr = c.pr;\n";
         // Poll points record the exact guest pc first: an interrupt handler that switches tasks
         // returns through RTE to SPC, and run_guest re-enters this function there.
+        // This poll runs before the resume switch, so on a resumed entry the guest is at
+        // resume_pc, not at the function entry. Recording the entry made a task switch taken here
+        // come back to SPC = entry and re-run the prologue on the resumed frame's stack
+        // (Soulcalibur, 2026-10-05: fn_0c0221c0 resumed at 0x0c022400, re-entered at 0x0c0221c0,
+        // r15 28 bytes low, walker desynchronised, crash at frame 2272).
         if (opt_.irq_checks)
-            out << "    if (c.cycles >= c.next_event) { c.pc = " << hexu(spec_.entry)
-                << "; deliver_irq(c, m); }\n";
+            out << "    if (c.cycles >= c.next_event) { c.pc = resume_pc ? resume_pc : "
+                << hexu(spec_.entry) << "; deliver_irq(c, m); }\n";
         out << "    if (resume_pc) {\n        switch (resume_pc) {\n";
         for (std::uint32_t b : blocks_)
             out << "            case " << hexu(b) << ": goto " << label(b) << ";\n";

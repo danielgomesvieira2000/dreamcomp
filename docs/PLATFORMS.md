@@ -31,7 +31,7 @@ runtime happens for the device. Work items:
 5. **Lifecycle**: pause the guest on `SDL_EVENT_WILL_ENTER_BACKGROUND`, recreate the Vulkan
    surface on resume.
 6. **Input**: SDL3 gamepad already maps; touch overlay for phones without a pad (later).
-7. **Packaging**: Gradle project under `platform/android/`, APK built per port; no game data in
+7. **Packaging**: Gradle project (planned location: a `platform/android` folder), APK built per port; no game data in
    the APK.
 
 Needs: Android SDK + NDK r27+ (Android Studio or command-line tools, several GB) — Daniel's call.

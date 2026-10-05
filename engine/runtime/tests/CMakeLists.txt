@@ -5,6 +5,7 @@ add_executable(dream_runtime_tests
   test_system.cpp
   test_devinterp.cpp
   test_gdrom.cpp
+  test_mod_disc.cpp
   test_bios.cpp
   test_maple.cpp
   test_memcard.cpp

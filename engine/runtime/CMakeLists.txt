@@ -17,6 +17,7 @@ add_library(dream_runtime STATIC
   src/pvr/core.cpp
   src/system.cpp
   src/gdrom/disc.cpp
+  src/gdrom/mod_disc.cpp
   src/hle/flash.cpp
   src/hle/bios.cpp
   src/maple/maple.cpp

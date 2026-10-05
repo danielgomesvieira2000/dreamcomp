@@ -3,6 +3,7 @@ add_executable(dream_translator_tests
   test_decoder.cpp
   test_config.cpp
   test_symbols.cpp
+  test_emit.cpp
 )
 target_include_directories(dream_translator_tests SYSTEM PRIVATE ${DREAM_ROOT}/third_party/doctest)
 target_link_libraries(dream_translator_tests PRIVATE dream::translator)
