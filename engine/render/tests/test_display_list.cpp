@@ -253,6 +253,29 @@ TEST_CASE("display list: a 32-byte intensity header carries its face colour in w
     CHECK(((f.vertices[1].base >> 16) & 0xFFu) == 0x80u);
 }
 
+// An untextured intensity vertex has two ignored words where the texture coordinates would be and
+// its intensity at word 6 (Flycast's TA_Vertex2), like the textured one.
+TEST_CASE("display list: an untextured intensity vertex reads its intensity from word 6") {
+    Stream s;
+    Pcw header;
+    header.col_type = 2;  // 32-byte header, face colour in words 4 to 7
+    s.chunk({header.word(), 0, 0, 0, f2u(1.0f), f2u(1.0f), f2u(1.0f), f2u(1.0f)});
+    for (int i = 0; i < 3; ++i) {
+        Pcw v;
+        v.para_type = 7;
+        v.col_type = 2;
+        v.end_of_strip = i == 2 ? 1u : 0u;
+        // Word 4 holds junk that must not be read as the intensity.
+        s.chunk({v.word(), f2u(static_cast<float>(i)), f2u(0), f2u(1), f2u(1.0f), 0, f2u(0.5f),
+                 0});
+    }
+    DisplayList dl;
+    s.feed(dl);
+    const Frame& f = dl.frame();
+    REQUIRE(f.vertices.size() == 3);
+    CHECK(((f.vertices[0].base >> 16) & 0xFFu) == 0x80u);
+}
+
 TEST_CASE("display list: intensity mode 2 keeps the previous face colour and a 32-byte header") {
     // Mode 2 reuses the face colour the last polygon established, so it never carries one however
     // it is textured. Crazy Taxi's SEGA logo mixes the two modes in one screen: reading a mode 2
@@ -300,6 +323,42 @@ TEST_CASE("display list: floating-point colours come from the vertex's second ha
     const Frame& f = dl.frame();
     REQUIRE(f.vertices.size() == 3);
     CHECK(f.vertices[0].base == 0xFF00FF00u);
+}
+
+// Only the first header after an end of list chooses the list; later headers' list bits are
+// ignored until the list is closed. Soulcalibur's dust sprites carry list bits of 0 inside its
+// translucent list, and taking them at face value drew them opaque, as black boxes.
+TEST_CASE("display list: the list type is latched by the first header after an end of list") {
+    Stream s;
+    Pcw translucent;
+    translucent.list = 2;
+    s.chunk({translucent.word(), 0, 0, 0});
+    packed_vertex(s, 0, 0, 1, 0xFFFFFFFFu, false);
+    packed_vertex(s, 1, 0, 1, 0xFFFFFFFFu, false);
+    packed_vertex(s, 0, 1, 1, 0xFFFFFFFFu, true);
+    Pcw sprite;  // list bits 0, but the translucent list is still open
+    sprite.para_type = 5;
+    s.chunk({sprite.word(), 0, 0, 0, 0x80FFFFFFu, 0});
+    Pcw v;
+    v.para_type = 7;
+    s.chunk({v.word(), f2u(0), f2u(0), f2u(2), f2u(10), f2u(0), f2u(2), f2u(10)});
+    s.chunk({f2u(10), f2u(2), f2u(0), f2u(10), 0, 0, 0, 0});
+    Pcw eol;
+    eol.para_type = 0;
+    s.chunk({eol.word()});
+    // After the end of list, a header's bits choose again.
+    Pcw opaque;
+    s.chunk({opaque.word(), 0, 0, 0});
+    packed_vertex(s, 0, 0, 1, 0xFFFFFFFFu, false);
+    packed_vertex(s, 1, 0, 1, 0xFFFFFFFFu, false);
+    packed_vertex(s, 0, 1, 1, 0xFFFFFFFFu, true);
+    s.chunk({eol.word()});
+
+    DisplayList dl;
+    s.feed(dl);
+    const Frame& f = dl.frame();
+    CHECK(f.lists[2].size() == 2);
+    CHECK(f.lists[0].size() == 1);
 }
 
 TEST_CASE("display list: a sprite becomes a four-vertex quad with the fourth corner solved") {

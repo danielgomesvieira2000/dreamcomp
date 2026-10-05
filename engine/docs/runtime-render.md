@@ -81,6 +81,13 @@ Points worth knowing, each of which cost a test to establish:
   `CaclulateSpritePlane`. One sprite becomes a four-vertex strip.
 - **A modifier-volume vertex is a whole triangle**, nine floats spanning both halves of a 64-byte
   parameter, not a strip vertex.
+- **The list type is latched by the first header after an end of list.** Later headers' list bits
+  are ignored until the list is closed (Flycast's `startList`). Soulcalibur writes them only on
+  the first header; its dust and torch-flame sprites carry 0 inside the translucent list, and
+  reading the bits per header drew them in the opaque list as solid black boxes.
+- **An untextured vertex's colour is word 6**, packed or intensity, the same word as a textured
+  one: words 4 and 5 are ignored. Only an untextured two-volume vertex puts its two colours in
+  words 4 and 5.
 
 Tested two ways (`render/tests/test_display_list.cpp`). Hand-built streams cover each parameter
 form, so a failure points at the decoder rather than at a capture. And a captured Crazy Taxi frame
@@ -138,6 +145,20 @@ Worth knowing:
 - **Within a codebook entry the four texels are themselves twiddled**: (0,0), (0,1), (1,0), (1,1).
 - **Only plain 16-bit textures may be in scan order.** An indexed or compressed texture is twiddled
   whatever the bit says.
+- **YUV 4:2:2 is one 16-bit word per texel at the texel's own position**: luma in the high byte,
+  and in the low byte U on the even texel of a horizontal pair and V on the odd one. In a linear
+  texture that is the familiar U Y0 V Y1 byte order, but in a twiddled one the pair's two words are
+  not adjacent (the twiddled order steps down before it steps across). The decoder therefore
+  gathers every 16-bit format's words into scan order first and pairs afterwards; pairing adjacent
+  words in memory took V from the texel below and turned Soulcalibur's skin and cloth green and
+  purple. VQ codebook entries hold YUV the same way, and 4- and 8-bit VQ entries hold a twiddled
+  4x4 or 2x4 block of palette indices (Flycast's `texPAL4_VQ`/`texPAL8_VQ`).
+- **A mipmapped base level starts after the smaller levels plus three texels of padding** (one
+  byte for VQ): 48 bytes in for an 8x8 16-bit texture, 24 for 8-bit, 12 for 4-bit. These are
+  Flycast's `OtherMipPoint` and `VQMipPoint` tables. One texel of padding read every 16- and 8-bit
+  mipmapped texture two texels early, which in twiddled order scrambles neighbouring texels:
+  Soulcalibur's floors and carpets came out speckled. `texture_pack.cpp` repeats this offset for
+  hashing and must stay identical.
 
 The cache keys on the two words, decodes and uploads once, and hands back a descriptor set.
 Invalidation is deliberately coarse: everything is dropped when palette memory changes. Tracking

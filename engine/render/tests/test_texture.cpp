@@ -237,6 +237,84 @@ TEST_CASE("texture: YUV pairs share their chroma") {
     CHECK((pixels[0] >> 24) == 255u);
 }
 
+// Twiddled YUV keeps one word per texel at the texel's own twiddled position (luma high, chroma
+// low), and a horizontal pair shares the U of its even texel and the V of its odd one. Those two
+// words are not adjacent in memory: the twiddled order steps down before it steps across.
+TEST_CASE("texture: twiddled YUV pairs texels across, not down") {
+    auto v = vram();
+    TextureInfo info;
+    REQUIRE(describe_texture(make_tcw(0, 3, /*twiddled=*/true), make_tsp(0, 0), 0, info));
+    REQUIRE(info.twiddled);
+    // Every pair is the same saturated red: u = 90 on the even texel, v = 230 on the odd one.
+    for (u32 y = 0; y < 8; ++y)
+        for (u32 x = 0; x < 8; ++x) {
+            const std::uint8_t chroma = (x & 1u) == 0 ? 90 : 230;
+            put16(v, twiddle_index(x, y, 8, 8) * 2,
+                  static_cast<std::uint16_t>(chroma | (128 << 8)));
+        }
+    std::vector<u32> pixels;
+    std::uint32_t palette[1024] = {};
+    REQUIRE(decode_texture(info, v.data(), v.size(), palette, pixels));
+    // Pairing the two words adjacent in memory pairs (x, y) with (x, y + 1) instead, so u == v:
+    // a green cast on the even columns and a magenta one on the odd.
+    for (u32 i = 0; i < 64; ++i) {
+        CAPTURE(i);
+        CHECK((pixels[i] & 0xFFu) > 200u);             // red
+        CHECK(((pixels[i] >> 8) & 0xFFu) < 100u);      // not green
+        CHECK(((pixels[i] >> 16) & 0xFFu) < 100u);     // not blue
+    }
+}
+
+TEST_CASE("texture: VQ YUV codebook entries decode as two horizontal pairs") {
+    auto v = vram();
+    TextureInfo info;
+    REQUIRE(describe_texture(make_tcw(0, 3, true, /*vq=*/true), make_tsp(0, 0), 0, info));
+    // Entry 0 is twiddled within itself: (0,0) (0,1) (1,0) (1,1). Row 0 red, row 1 blue.
+    const std::uint16_t entry[4] = {90 | (128 << 8), 230 | (128 << 8), 230 | (128 << 8),
+                                    90 | (128 << 8)};
+    for (unsigned t = 0; t < 4; ++t) put16(v, t * 2, entry[t]);
+    std::vector<u32> pixels;
+    std::uint32_t palette[1024] = {};
+    REQUIRE(decode_texture(info, v.data(), v.size(), palette, pixels));
+    CHECK((pixels[0] & 0xFFu) > 200u);           // (0,0) red
+    CHECK((pixels[1] & 0xFFu) > 200u);           // (1,0) red
+    CHECK(((pixels[8] >> 16) & 0xFFu) > 200u);   // (0,1) blue
+    CHECK((pixels[0] >> 24) == 255u);
+}
+
+// The base level of a mipmapped texture follows the smaller levels and a padding of three texels
+// (one byte for VQ), per Flycast's OtherMipPoint and VQMipPoint tables. For an 8x8 texture the
+// base starts 24 texels in: 48 bytes at 16 bits, 24 at 8, 12 at 4; VQ indices start 6 bytes in.
+TEST_CASE("texture: a mipmapped texture's base level starts after the chain and its padding") {
+    struct Case {
+        unsigned format;
+        bool vq;
+        u32 offset;
+    };
+    const Case cases[] = {{1, false, 48}, {6, false, 24}, {5, false, 12}, {1, true, 256 * 8 + 6}};
+    for (const Case& c : cases) {
+        CAPTURE(c.format);
+        CAPTURE(c.vq);
+        auto v = vram();
+        TextureInfo info;
+        REQUIRE(describe_texture(make_tcw(0, c.format, true, c.vq, /*mipmapped=*/true),
+                                 make_tsp(0, 0), 0, info));
+        std::uint32_t palette[1024] = {};
+        palette[1] = 0xFF00FF00u;
+        if (c.vq) {
+            put16(v, 8, 0x07E0u);  // codebook entry 1, first texel: green
+            v[c.offset] = 1;       // the base level's first index
+        } else if (c.format == 1) {
+            put16(v, c.offset, 0x07E0u);
+        } else {
+            v[c.offset] = 1;  // index 1 (the low nibble for 4-bit)
+        }
+        std::vector<u32> pixels;
+        REQUIRE(decode_texture(info, v.data(), v.size(), palette, pixels));
+        CHECK(pixels[0] == 0xFF00FF00u);
+    }
+}
+
 TEST_CASE("texture: a texture that would read past video memory is refused") {
     std::vector<std::uint8_t> tiny(64, 0);
     TextureInfo info;

@@ -54,7 +54,36 @@ void TextureCache::set_memory(const std::uint8_t* vram, std::size_t vram_size,
     vram_size_ = vram_size;
     if (palette_ram)
         unpack_palette(palette_ram, palette_format, palette_);
+    rehash_banks();
     invalidate();
+}
+
+void TextureCache::rehash_banks() {
+    for (unsigned b = 0; b < 64; ++b) {
+        std::uint64_t h = 0xCBF29CE484222325ull;
+        for (unsigned i = 0; i < 16; ++i) h = (h ^ palette_[b * 16 + i]) * 0x100000001B3ull;
+        bank_hash_[b] = h;
+    }
+}
+
+void TextureCache::begin_frame() {
+    ++frame_;
+    // Leave headroom under the pool (kMaxTextures descriptor sets) for one frame's new textures.
+    constexpr std::size_t kHigh = 1536, kLow = 1024;
+    if (entries_.size() < kHigh || !ctx_ || !ctx_->device())
+        return;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> age;  // last_frame, key
+    age.reserve(entries_.size());
+    for (const auto& [key, e] : entries_) age.emplace_back(e.last_frame, key);
+    std::sort(age.begin(), age.end());
+    for (std::size_t i = 0; i < age.size() && entries_.size() > kLow; ++i) {
+        if (age[i].first >= frame_ - 1)
+            break;  // used by the render that just finished or this one: keep
+        auto it = entries_.find(age[i].second);
+        free_entry(it->second);
+        entries_.erase(it);
+        ++evicted;
+    }
 }
 
 void TextureCache::invalidate() {
@@ -85,7 +114,11 @@ bool TextureCache::set_palette(const std::uint32_t* palette_ram, PaletteFormat f
     if (std::memcmp(unpacked, palette_, sizeof palette_) == 0)
         return false;
     std::memcpy(palette_, unpacked, sizeof palette_);
-    invalidate();
+    // Nothing is freed (dreamcomp): indexed entries are keyed by the content of the palette banks
+    // they read (bank_hash_), so the textures for the new palette are different keys and the old
+    // ones stay cached for when the palette comes back. LRU eviction in begin_frame() bounds it.
+    // This used to drop the whole cache with a device wait on every change.
+    rehash_banks();
     return true;
 }
 
@@ -234,14 +267,36 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         return VK_NULL_HANDLE;
     // The size lives in the TSP word, the rest in the TCW; together they identify the texture, and
     // the addressing the polygons need decides the sampler bound with it.
-    const std::uint64_t key =
+    std::uint64_t key =
         (static_cast<std::uint64_t>(tcw) << 32) | (tsp & 0x3Fu) | (tiled ? 0x40u : 0u);
+    // Indexed textures: fold in the content of the palette banks they read (dreamcomp), so a
+    // palette change selects a different entry instead of invalidating this one.
+    {
+        auto [mit, fresh] = meta_.try_emplace(key);
+        Meta& meta = mit->second;
+        if (fresh) {
+            TextureInfo probe;
+            meta.ok = describe_texture(tcw, tsp, 0, probe);
+            meta.indexed = meta.ok && probe.indexed();
+            meta.palette_base = probe.palette_base;
+            meta.palette_count = probe.format == PixelFormat::Palette4 ? 16u : 256u;
+        }
+        if (meta.indexed) {
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;
+            for (std::uint32_t b = meta.palette_base / 16;
+                 b < (meta.palette_base + meta.palette_count) / 16 && b < 64; ++b)
+                h = (h ^ bank_hash_[b]) * 0x100000001B3ull;
+            key ^= h & 0xFFFFFFFFFFFFFF80ull;  // keeps the low bits (tsp size, tiled) readable
+        }
+    }
     if (auto it = entries_.find(key); it != entries_.end()) {
         ++hits;
+        it->second.last_frame = frame_;
         return it->second.set;
     }
 
     Entry e;
+    e.last_frame = frame_;
     if (!describe_texture(tcw, tsp, 0, e.info)) {
         ++failed;
         entries_.emplace(key, std::move(e));  // remember the failure so it is not retried per frame

@@ -204,23 +204,23 @@ void unpack_palette(const std::uint32_t* palette_ram, PaletteFormat format, std:
 namespace {
 
 // Where the base level of a mipmapped texture starts. The hardware stores the chain smallest
-// first, each level a quarter of the next, with a small fixed offset the size of one texel.
+// first, each level a quarter of the next. A VQ chain's 1x1 level is one index byte, with one
+// byte of padding in front of it; every other format puts the 1x1 level three texels in, so the
+// padding is three texels at the format's own depth (6 bytes at 16 bits, 3 at 8, 1 at 4). These
+// are Flycast's VQMipPoint and OtherMipPoint tables (core/rend/TexCache.cpp, GPL-2.0, ADR 1).
+// Padding by one texel instead reads every 16-bit and 8-bit mipmapped texture two texels early in
+// twiddled order, which scrambles neighbouring texels: Soulcalibur's floors came out speckled.
 u32 mipmap_base_offset(const TextureInfo& info) {
     if (!info.mipmapped)
         return 0;
-    u32 offset = 0;
-    for (u32 size = 1; size < info.width; size <<= 1) {
-        u32 texels = size * size;
-        if (info.vq)
-            texels /= 4;  // one index byte per 2x2 block
-        else if (info.format == PixelFormat::Palette4)
-            texels /= 2;
-        else if (info.format != PixelFormat::Palette8)
-            texels *= 2;
-        offset += texels;
-    }
-    // The chain begins after a single texel's worth of padding.
-    return offset + (info.vq ? 1u : (info.format == PixelFormat::Palette8 ? 1u : 2u));
+    u32 texels = 0;
+    for (u32 size = 1; size < info.width; size <<= 1) texels += size * size;
+    if (info.vq)
+        return texels / 4u + 1u;  // one index byte per 2x2 block
+    const u32 bpp = info.format == PixelFormat::Palette4   ? 4u
+                    : info.format == PixelFormat::Palette8 ? 8u
+                                                           : 16u;
+    return (texels + 3u) * bpp / 8u;
 }
 
 u32 unpack_16(PixelFormat format, u16 p) {
@@ -240,6 +240,29 @@ u32 unpack_16(PixelFormat format, u16 p) {
     }
 }
 
+// Converts 16-bit texels already in scan order. YUV 4:2:2 keeps luma in each word's high byte and
+// a chroma sample in its low byte: U on the even texel of a horizontal pair, V on the odd one. In
+// a linear texture that is the familiar U Y0 V Y1 byte order; in a twiddled one the pair's two
+// words are not adjacent in memory (the twiddled order steps down before it steps across), which
+// is why pairing must happen after the words are put back in scan order. Pairing adjacent words in
+// memory instead takes U from one row and "V" from the U of the row below, which turns skin and
+// sky green and purple. Flycast's ConvertTwiddleYUV (core/rend/texconv.cpp, GPL-2.0) is the
+// reference.
+void convert_16(PixelFormat format, const std::vector<u16>& words, u32 w, u32 h,
+                std::vector<u32>& out) {
+    if (format != PixelFormat::Yuv422) {
+        for (std::size_t i = 0; i < words.size(); ++i) out[i] = unpack_16(format, words[i]);
+        return;
+    }
+    for (u32 y = 0; y < h; ++y)
+        for (u32 x = 0; x + 1 < w; x += 2) {
+            const std::size_t at = static_cast<std::size_t>(y) * w + x;
+            const s32 u = words[at] & 0xFF, v = words[at + 1] & 0xFF;
+            out[at] = yuv_to_rgba(words[at] >> 8, u, v);
+            out[at + 1] = yuv_to_rgba(words[at + 1] >> 8, u, v);
+        }
+}
+
 }  // namespace
 
 bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size_t vram_size,
@@ -256,31 +279,40 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
 
     if (info.vq) {
         // The 256-entry codebook sits at the texture's address and the block indices follow it,
-        // so the index data starts 2 KB in (plus the mipmap chain when there is one).
+        // so the index data starts 2 KB in (plus the mipmap chain when there is one). Each entry
+        // is eight bytes: a 2x2 block of 16-bit texels, a 2x4 block of 8-bit indices or a 4x4
+        // block of 4-bit ones. VQ data is always twiddled, and so is each entry, so a texel's
+        // twiddled index splits into the block (high bits) and its place in the entry (low bits).
         const u32 codebook = info.address;
         const u32 indices = info.address + 256u * 8u + mipmap_base_offset(info);
         if (!in_range(codebook, 256 * 8))
             return false;
-        const u32 blocks_x = w / 2, blocks_y = h / 2;
-        for (u32 by = 0; by < blocks_y; ++by) {
-            for (u32 bx = 0; bx < blocks_x; ++bx) {
-                const u32 index_offset =
-                    indices + (info.twiddled ? twiddle_index(bx, by, blocks_x, blocks_y)
-                                             : by * blocks_x + bx);
-                if (!in_range(index_offset, 1))
-                    return false;
-                const u8* entry =
-                    vram + codebook + static_cast<std::size_t>(vram[index_offset]) * 8;
-                // Within a codebook entry the four texels are themselves in twiddled order:
-                // (0,0), (0,1), (1,0), (1,1).
-                for (u32 t = 0; t < 4; ++t) {
-                    const u32 tx = t >> 1, ty = t & 1u;
-                    const u32 x = bx * 2 + tx, y = by * 2 + ty;
-                    out[static_cast<std::size_t>(y) * w + x] =
-                        unpack_16(info.format, read16(entry + t * 2));
+        const u32 per_entry = info.format == PixelFormat::Palette4   ? 16u
+                              : info.format == PixelFormat::Palette8 ? 8u
+                                                                     : 4u;
+        const u32 shift = per_entry == 16u ? 4u : per_entry == 8u ? 3u : 2u;
+        if (!in_range(indices, w * h / per_entry))
+            return false;
+        std::vector<u16> words;
+        if (!info.indexed())
+            words.resize(static_cast<std::size_t>(w) * h);
+        for (u32 y = 0; y < h; ++y)
+            for (u32 x = 0; x < w; ++x) {
+                const u32 t = twiddle_index(x, y, w, h);
+                const u8* entry = vram + codebook + static_cast<std::size_t>(vram[indices + (t >> shift)]) * 8;
+                const u32 sub = t & (per_entry - 1u);
+                const std::size_t at = static_cast<std::size_t>(y) * w + x;
+                if (info.format == PixelFormat::Palette4) {
+                    const u8 byte = entry[sub / 2];
+                    out[at] = palette[info.palette_base + ((sub & 1u) ? (byte >> 4) : (byte & 0xFu))];
+                } else if (info.format == PixelFormat::Palette8) {
+                    out[at] = palette[info.palette_base + entry[sub]];
+                } else {
+                    words[at] = read16(entry + sub * 2);
                 }
             }
-        }
+        if (!info.indexed())
+            convert_16(info.format, words, w, h, out);
         return true;
     }
 
@@ -308,35 +340,23 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
                 }
             return true;
         }
-        case PixelFormat::Yuv422: {
-            if (!in_range(base, w * h * 2))
-                return false;
-            // Two texels per four bytes. Twiddled YUV is stored as pairs, so the pair index is
-            // twiddled over half the width.
-            for (u32 y = 0; y < h; ++y)
-                for (u32 x = 0; x < w; x += 2) {
-                    const u32 pair =
-                        info.twiddled ? twiddle_index(x / 2, y, w / 2, h) : (y * w + x) / 2;
-                    const u8* p = vram + base + static_cast<std::size_t>(pair) * 4;
-                    const s32 u = p[0], y0 = p[1], v = p[2], y1 = p[3];
-                    out[static_cast<std::size_t>(y) * w + x] = yuv_to_rgba(y0, u, v);
-                    if (x + 1 < w)
-                        out[static_cast<std::size_t>(y) * w + x + 1] = yuv_to_rgba(y1, u, v);
-                }
-            return true;
-        }
+        case PixelFormat::Yuv422:
         case PixelFormat::Argb1555:
         case PixelFormat::Rgb565:
         case PixelFormat::Argb4444:
         case PixelFormat::BumpMap: {
             if (!in_range(base, w * h * 2))
                 return false;
+            // Every 16-bit format, YUV included, stores one word per texel at the texel's own
+            // position, so the words are gathered into scan order first and converted after.
+            std::vector<u16> words(static_cast<std::size_t>(w) * h);
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; ++x) {
                     const u32 index = info.twiddled ? twiddle_index(x, y, w, h) : y * w + x;
-                    out[static_cast<std::size_t>(y) * w + x] = unpack_16(
-                        info.format, read16(vram + base + static_cast<std::size_t>(index) * 2));
+                    words[static_cast<std::size_t>(y) * w + x] =
+                        read16(vram + base + static_cast<std::size_t>(index) * 2);
                 }
+            convert_16(info.format, words, w, h, out);
             return true;
         }
         default:

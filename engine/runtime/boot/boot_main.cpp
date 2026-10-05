@@ -175,6 +175,7 @@ struct Live {
         // Palette memory is re-read every render but only invalidates the cache when it has
         // actually changed, which is rare; dropping it every frame would decode every texture
         // every frame.
+        renderer.textures().begin_frame();  // LRU eviction between renders (dreamcomp)
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))
             ++palette_changes;
         if (!offscreen.render(renderer, frame, geometry)) {

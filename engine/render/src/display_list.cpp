@@ -231,12 +231,19 @@ void DisplayList::handle_header(const std::uint32_t w[8]) {
     end_strip();  // a new header ends whatever strip was open
     header_active_ = false;
 
-    const unsigned list = pcw_list_type(pcw);
-    if (list >= kListCount) {
-        ++frame_.unknown_parameters;
-        return;
+    // The list type is latched by the first header after an end of list and ignored on every
+    // header after it until the list is closed, as the hardware and Flycast's ta_vtx.cpp
+    // (startList, GPL-2.0, ADR 1) do. Soulcalibur's dust and torch-flame sprites sit in its
+    // translucent list with list-type bits of 0; reading them per header put those sprites in the
+    // opaque list, where they drew as solid black boxes.
+    if (list_ >= kListCount) {
+        const unsigned list = pcw_list_type(pcw);
+        if (list >= kListCount) {
+            ++frame_.unknown_parameters;
+            return;
+        }
+        list_ = list;
     }
-    list_ = list;
 
     current_ = Polygon{};
     current_.pcw = pcw;
@@ -295,8 +302,13 @@ void DisplayList::handle_vertex(const std::uint32_t w[8], bool have_second_half,
     const bool offset = pcw_offset(pcw) != 0;
     const bool uv_short = pcw_uv_16bit(pcw) != 0;
 
-    // Words 4 and 5 are the texture coordinates when textured; otherwise they are ignored.
-    unsigned next = 4;
+    // Words 4 and 5 are the texture coordinates when textured; otherwise they are ignored, and the
+    // colour (packed or intensity) is word 6 either way. The exception is an untextured
+    // two-volume vertex, whose two colours are words 4 and 5 (Flycast's TA_Vertex2, 9 and 10 in
+    // ta_structs.h). Reading word 4 for an ordinary untextured intensity vertex took an ignored
+    // word as its intensity.
+    const bool two_volume_flat = !textured && pcw_volume(pcw) != 0;
+    unsigned next = two_volume_flat ? 4 : 6;
     if (textured) {
         if (uv_short) {
             // 16-bit coordinates share one word, v in the low half and u in the high half.
@@ -312,8 +324,8 @@ void DisplayList::handle_vertex(const std::uint32_t w[8], bool have_second_half,
 
     switch (col) {
         case kPacked:
-            v.base = w[6];
-            v.offset = offset ? w[7] : 0;
+            v.base = w[next];
+            v.offset = offset && !two_volume_flat ? w[7] : 0;
             break;
         case kFloating:
             if (have_second_half) {
@@ -329,7 +341,9 @@ void DisplayList::handle_vertex(const std::uint32_t w[8], bool have_second_half,
         case kIntensityPrev: {
             const float base_i = as_float(w[next]);
             v.base = intensity_colour(face_base_, base_i);
-            v.offset = offset ? intensity_colour(face_offset_, as_float(w[next + 1])) : 0;
+            v.offset = offset && !two_volume_flat
+                           ? intensity_colour(face_offset_, as_float(w[next + 1]))
+                           : 0;
             break;
         }
         default:

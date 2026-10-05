@@ -52,18 +52,14 @@ void put32(std::vector<u8>& v, u32 x) {
 u32 base_level_offset(const TextureInfo& info) {
     if (!info.mipmapped)
         return 0;
-    u32 offset = 0;
-    for (u32 size = 1; size < info.width; size <<= 1) {
-        u32 texels = size * size;
-        if (info.vq)
-            texels /= 4;
-        else if (info.format == PixelFormat::Palette4)
-            texels /= 2;
-        else if (info.format != PixelFormat::Palette8)
-            texels *= 2;
-        offset += texels;
-    }
-    return offset + (info.vq ? 1u : (info.format == PixelFormat::Palette8 ? 1u : 2u));
+    u32 texels = 0;
+    for (u32 size = 1; size < info.width; size <<= 1) texels += size * size;
+    if (info.vq)
+        return texels / 4u + 1u;
+    const u32 bpp = info.format == PixelFormat::Palette4   ? 4u
+                    : info.format == PixelFormat::Palette8 ? 8u
+                                                           : 16u;
+    return (texels + 3u) * bpp / 8u;
 }
 
 double ms_since(std::chrono::steady_clock::time_point t0) {

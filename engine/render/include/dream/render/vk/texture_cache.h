@@ -65,6 +65,13 @@ public:
     VkDescriptorSet fallback(VkCommandBuffer cmd);
 
     std::size_t size() const noexcept { return entries_.size(); }
+
+    // Marks the start of a render (dreamcomp). Everything a previous render used has finished on
+    // the GPU by now (the offscreen pass waits on its fence), so entries not used since can be
+    // freed without a device wait; the least recently used are evicted here when the cache is
+    // near the descriptor pool's limit.
+    void begin_frame();
+    std::uint32_t evicted = 0;
     std::uint32_t decoded = 0, failed = 0, hits = 0;
     // Textures dropped because the renderer wrote over them: a non-zero count means the title
     // really is rendering to a texture rather than merely double buffering.
@@ -93,7 +100,21 @@ private:
         VkDescriptorSet set = VK_NULL_HANDLE;
         HostBuffer staging;
         TextureInfo info;
+        std::uint64_t last_frame = 0;
     };
+    // Per hardware key: what the key needs to know before the texture is decoded (dreamcomp).
+    struct Meta {
+        bool ok = false, indexed = false;
+        std::uint32_t palette_base = 0, palette_count = 0;
+    };
+    std::unordered_map<std::uint64_t, Meta> meta_;
+    // A hash of each 16-entry palette bank, updated when palette memory changes. An indexed
+    // texture's cache key includes the hash of the banks it reads, so a palette that cycles
+    // between a few states keeps hitting the cache instead of re-decoding (Soulcalibur changes a
+    // palette 1,363 times in 3,000 frames).
+    std::uint64_t bank_hash_[64]{};
+    void rehash_banks();
+    std::uint64_t frame_ = 1;
 
     void free_entry(Entry& e);
     VkSampler sampler_for(std::uint32_t tsp, bool tiled);
