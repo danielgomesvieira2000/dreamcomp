@@ -1,0 +1,63 @@
+# Roadmap
+
+Phases have **entry gates** (measured true before starting) and **exit criteria** that are visible
+behaviour, not "it builds". Status is honest: "not verified" means not verified.
+
+## F0 — Framework foundation ✅ (2026-10-05)
+
+| Item | Status |
+|---|---|
+| Engine vendored (D-001), builds on Windows with clang-cl + Ninja + Vulkan | done |
+| `tools/dc.py` setup/build/run/report/shots; `tools/audit.py` + pre-commit hook | done |
+| Port layer: `[hooks]`, launcher extensions, settings, presentation modes | done; hooks compiled but **not yet exercised by a port** |
+| Docs, decisions, legal, skills | done (this commit series) |
+
+## P1 — Soulcalibur bring-up (active)
+
+Entry gate: met (boots to menus on the engine).
+
+| Exit criterion | Status |
+|---|---|
+| Boots from `--disc` alone, boot file verified | done |
+| Music and effects play | done (0 → 12 key-ons in 1800 frames; RMS -13…-25 dBFS); **not yet listened to by Daniel** |
+| Reaches a fight; 0 untranslated targets over 60 s | 1 new target (`0x0C019FC0`) at ~frame 3000; interpreter covers it; seed pending |
+| Plays a full arcade run with no fault | not verified |
+| Saves to the per-user VMU and loads them | not verified |
+| Logo frame at boot (frame ~120) shows corrupted tiles | open defect |
+| Daniel playtests and confirms | pending |
+
+## P2 — Enhancements
+
+| Item | Plan | Status |
+|---|---|---|
+| Internal resolution | engine `--scale 1-4`; setting `scale` | works (engine) |
+| Widescreen (anamorphic) | `PortInfo::widescreen`, Flycast value for T1401N | prototyped; **gameplay crash at frame ~2272 under investigation** |
+| Widescreen HUD fix | hooks on the 2D draw path, per game | not started |
+| Texture dump / replacement packs | content hash over raw VRAM texture bytes (+ palette/codebook), versioned; dump mode first; `mods/textures/<hash>.png` | not started (design: engine `docs/future-enhancements.md` §3) |
+| Mods: file replacement | virtual disc layer that serves `mods/files/<path>` in place of disc files, re-laying out ISO9660 extents | not started |
+| Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
+| Higher frame rate | frame generation (engine study: reprojection, 35 days); game logic stays at 60 | research |
+| Settings UI / launcher (disc picker) | in-window menu next to F1 bindings | not started |
+
+## P3 — Platforms
+
+| Platform | Plan | Status |
+|---|---|---|
+| Windows x64 | primary | works |
+| Linux x64 | WSL build script + CI | not started |
+| macOS ARM64 | engine's primary dev platform (MoltenVK); CI | not verified here |
+| Android ARM64 | SDL3 + Vulkan, Gradle wrapper, host-built translator output, SAF disc access | not started; blockers listed in ARCHITECTURE notes (execinfo, argv/config paths, lifecycle) |
+
+## P4 — Tooling
+
+| Item | Status |
+|---|---|
+| Automated screenshots / contact sheet (`dc.py shots`) | done |
+| Headless reports (`dc.py report`) | done |
+| Profiler: symbolised per-function hot list from `--sample` | not started |
+| Regression gate per port (engine `tools/regress/gate.py`) | not wired up |
+| CI (audit + engine tests + port config lint) | not started |
+
+## P5 — Second title (Jet Grind Radio)
+
+Entry gate: P1 exit met; the port template extracted from Soulcalibur.
