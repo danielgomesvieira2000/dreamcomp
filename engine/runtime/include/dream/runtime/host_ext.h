@@ -13,7 +13,9 @@
 // report). All run on the guest thread; none may block.
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -46,7 +48,44 @@ public:
     // guest's 640x480 screen space and may be edited: widescreen HUD correction, debug overlays.
     virtual void on_frame(render::Frame& frame) { (void)frame; }
     virtual void on_stop(System& sys, const char* why) { (void)sys, (void)why; }
+
+    // --- in-game overlay (window builds) -------------------------------------------------------
+    // An extension that draws a menu over the game returns true from wants_overlay(). The
+    // launcher then stops Escape from quitting and the pad's Back button from opening the binding
+    // screen (F1 still does), and offers every SDL event to on_event() first (`sdl_event` is a
+    // `const SDL_Event*`; return true to consume it). While overlay_open() is true the guest keeps
+    // running but its pads read as released, and each presented frame goes through
+    // draw_overlay(): `rgba` is the frame (RGBA, red in the low byte, `w` x `h`, row 0 at the
+    // top), `view_w` x `view_h` the window it is shown in. on_event() runs inside the window's
+    // event poll, draw_overlay() inside the present: an extension must not assume both are on the
+    // guest thread.
+    virtual bool wants_overlay() { return false; }
+    virtual bool on_event(const void* sdl_event) {
+        (void)sdl_event;
+        return false;
+    }
+    virtual bool overlay_open() { return false; }
+    virtual void draw_overlay(std::uint32_t* rgba, unsigned w, unsigned h, unsigned view_w,
+                              unsigned view_h) {
+        (void)rgba, (void)w, (void)h, (void)view_w, (void)view_h;
+    }
 };
+
+// What an overlay may ask of the running launcher. Set by the launcher once its window is open;
+// empty otherwise (headless), so callers check before calling.
+struct HostControls {
+    std::function<void()> quit;                  // end the run, as closing the window does
+    std::function<void()> open_bindings;         // the controller binding screen (F1)
+    std::function<void(float)> set_rumble;       // 0..1
+    std::function<void(bool)> set_fullscreen;
+    std::function<bool()> fullscreen;
+    std::function<void(float)> set_volume;       // 0..1, master output level
+};
+
+inline HostControls& host_controls() {
+    static HostControls c;
+    return c;
+}
 
 inline std::vector<Extension*>& extensions() {
     static std::vector<Extension*> list;

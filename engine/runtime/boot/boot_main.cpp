@@ -314,8 +314,11 @@ struct Live {
 
         // The in-between frame goes first, before the real frame's swapchain image is acquired
         // (acquiring twice would wait on a fence the first acquire just reset).
+        const bool overlay_up = overlay_open();
+        // An open overlay owns the keyboard and pads; the game keeps running with them released.
+        window.set_game_input_blocked(overlay_up);
         if (interpolate && interp_ready && from_renderer && !offscreen.readback && !show_fps &&
-            !menu.is_open()) {
+            !menu.is_open() && !overlay_up) {
             interp_ready = false;
             std::uint32_t iimage = 0;
             VkCommandBuffer icmd = VK_NULL_HANDLE;
@@ -358,7 +361,8 @@ struct Live {
         }
         // Direct present (dreamcomp): a rendered frame nothing needs on the host is sampled where it
         // is, on the GPU. Overlays drawn on the CPU and framebuffer write-back still take the copy.
-        const bool direct = from_renderer && !offscreen.readback && !show_fps && !menu.is_open();
+        const bool direct =
+            from_renderer && !offscreen.readback && !show_fps && !menu.is_open() && !overlay_up;
         const std::uint32_t* source =
             direct ? nullptr : (from_renderer ? offscreen.pixels() : pixels.data());
         // Composited into the frame as it is handed to the GPU, so it costs no extra copy of the
@@ -367,6 +371,22 @@ struct Live {
         // another and usable as a reference image.
         if (direct) {
             // nothing to upload
+        } else if (overlay_up && source) {
+            // dreamcomp: an extension overlay blends into the frame, which means reading it back.
+            // The staging buffer `decorate` hands over is write-combined on some GPUs (reads cost
+            // ~100x), so the overlay works on a cached host copy that is then uploaded as is.
+            overlay_frame.assign(source, source + static_cast<std::size_t>(shown.width) *
+                                                      shown.height);
+            std::uint32_t* px = overlay_frame.data();
+            if (show_fps)
+                draw_counter(px, shown.width, shown.height);
+            for (auto* e : overlays)
+                if (e->overlay_open())
+                    e->draw_overlay(px, shown.width, shown.height, window.extent().width,
+                                    window.extent().height);
+            if (menu.is_open())
+                menu.draw(px, shown.width, shown.width, shown.height, window.devices());
+            presenter.upload(cmd, px, shown.width, shown.height);
         } else if (show_fps || menu.is_open())
             presenter.upload(cmd, source, shown.width, shown.height,
                              [this](std::uint32_t* px, std::uint32_t w, std::uint32_t h) {
@@ -473,7 +493,7 @@ struct Live {
         // from the outside is indistinguishable from a crash.
         if (rearm_escape && !window.held(Control::Back)) {
             rearm_escape = false;
-            window.set_escape_quits(true);
+            window.set_escape_quits(overlays.empty());  // an overlay owns escape (dreamcomp)
         }
         if (window.pressed(Control::Menu)) {
             if (menu.is_open())
@@ -775,6 +795,17 @@ struct Live {
     // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
     // nobody rebinds a control mid-corner.
     dream::render::InputMenu menu;
+    // Extensions drawing an in-game overlay (host_ext.h, dreamcomp). While one is open the guest
+    // is paused exactly as for the binding screen, and frames take the host-copy path so the
+    // overlay can be composited.
+    std::vector<dream::host::Extension*> overlays;
+    std::vector<std::uint32_t> overlay_frame;  // the frame an overlay is composited into
+    bool overlay_open() const {
+        for (auto* e : overlays)
+            if (e->overlay_open())
+                return true;
+        return false;
+    }
     // Where a change is written back. Empty means this run only: --bindings was pointed nowhere
     // usable, or SDL could not name a settings directory on this host.
     std::string bindings_path;
@@ -1210,6 +1241,7 @@ void usage(const char* argv0, std::FILE* out) {
         "  --mod DIR              serve DIR's files in place of the disc's (repeatable; the first\n"
         "                         --mod providing a file wins; dreamcomp docs/MODS.md)\n"
         "  --rumble N             controller rumble strength, 0 (off) to 100 percent (default)\n"
+        "  --volume N             master volume, 0 to 100 percent (default 100)\n"
         "  --texture-pack DIR     replace textures with DIR/**/*_<hash>.png (with --window;\n"
         "                         dreamcomp docs/TEXTURE-PACKS.md)\n"
         "  --dump-textures DIR    write each distinct texture once as DIR/<w>x<h>_<fmt>_<hash>.png\n"
@@ -1327,6 +1359,7 @@ int main(int argc, char** argv) {
     // (gdrom/mod_disc.h); the first root providing a file wins.
     std::vector<std::filesystem::path> mod_roots;
     int rumble_percent = 100;  // --rumble N (dreamcomp): pad rumble strength, 0 = off
+    int volume_percent = 100;  // --volume N (dreamcomp): master output level
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
     bool interpolate_frames = false;      // --interpolate (dreamcomp): a blended frame between renders
     bool interpolate_auto = false;        // --interpolate-auto: only on displays above 60 Hz
@@ -1443,6 +1476,8 @@ int main(int argc, char** argv) {
             mod_roots.emplace_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--rumble") && i + 1 < argc)
             rumble_percent = std::clamp(std::atoi(argv[++i]), 0, 100);
+        else if (!std::strcmp(argv[i], "--volume") && i + 1 < argc)
+            volume_percent = std::clamp(std::atoi(argv[++i]), 0, 100);
         else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
@@ -1550,6 +1585,7 @@ int main(int argc, char** argv) {
     (void)validation;
     (void)unthrottled;
     (void)rumble_percent;
+    (void)volume_percent;
     (void)writeback;
 #endif
     dream::translator::GameConfig cfg;
@@ -1932,12 +1968,46 @@ int main(int argc, char** argv) {
             bindings_file_set ? bindings_file : dream::render::vk::default_bindings_path();
         live->load_bindings();
         live->window.rumble_scale = static_cast<float>(rumble_percent) / 100.0f;
+        // dreamcomp: an extension's in-game overlay takes Escape and the pad's Back button, sees
+        // events first, and may ask the launcher to quit or open the binding screen.
+        for (auto* e : dream::host::extensions())
+            if (e->wants_overlay())
+                live->overlays.push_back(e);
+        if (!live->overlays.empty()) {
+            live->window.set_escape_quits(false);
+            live->window.set_pad_menu_button(false);
+            Live* lp = live.get();
+            live->window.event_filter = [lp](const void* ev) {
+                if (lp->menu.is_open())
+                    return false;  // the binding screen keeps its own keys
+                for (auto* e : lp->overlays)
+                    if (e->on_event(ev))
+                        return true;
+                return false;
+            };
+            auto& hc = dream::host::host_controls();
+            hc.quit = [lp] { lp->window.request_close(); };
+            hc.open_bindings = [lp] {
+                if (!lp->menu.is_open())
+                    lp->open_menu();
+            };
+            hc.set_rumble = [lp](float v) { lp->window.rumble_scale = std::clamp(v, 0.0f, 1.0f); };
+            hc.set_fullscreen = [lp](bool on) { lp->window.set_fullscreen(on); };
+            hc.fullscreen = [lp] { return lp->window.fullscreen(); };
+            hc.set_volume = [&volume_percent](float v) {
+                volume_percent = static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 100.0f + 0.5f);
+            };
+        }
         if (rumble_percent != 100)
             std::printf("rumble: %d%%\n", rumble_percent);
         rumble_fn = [&live](unsigned port, float strength, unsigned ms) {
             live->window.rumble(port, strength, ms);
         };
-        std::printf("F1 (or a pad's select button) opens the controller bindings\n");
+        if (live->overlays.empty())
+            std::printf("F1 (or a pad's select button) opens the controller bindings\n");
+        else
+            std::printf("F1 opens the controller bindings; Escape or a pad's select button the "
+                        "menu\n");
         auto previous_render = std::move(pvr.on_render);
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
             if (previous_render)
@@ -2032,7 +2102,12 @@ int main(int argc, char** argv) {
     aica.on_sample = [&](std::int16_t l, std::int16_t r) {
         ++arm_pcs[aica.arm.next_pc()];
 #ifdef DREAM_WITH_AUDIO
-        sink.push(l, r);
+        if (volume_percent != 100) {  // --volume (dreamcomp); --wav keeps the mixer's own level
+            sink.push(static_cast<std::int16_t>(l * volume_percent / 100),
+                      static_cast<std::int16_t>(r * volume_percent / 100));
+        } else {
+            sink.push(l, r);
+        }
 #endif
         if (!wav.empty() && pcm.size() < 44100u * 2u * 600u) {  // cap at ten minutes
             pcm.push_back(l);

@@ -8,8 +8,9 @@
 //   --save-settings                  write this run's overrides back to the settings file
 //   --settings FILE                  use FILE instead of the per-user settings file
 //   --launcher / --no-launcher       open (or skip) the launcher window (docs/FRONTEND.md)
-//   --launcher-screenshot FILE.png   render the launcher's tabs to PNGs and exit
-//   --launcher-tab NAME              the tab to open / to capture
+//   --launcher-screenshot FILE.png   render the frontend's screens to PNGs and exit
+//   --launcher-screen NAME           the screen to open / to capture (--launcher-tab: alias)
+// In a window, Escape or a pad's Select/Back opens the settings panel over the running game.
 //   --launcher-size WxH              the launcher window's size (default 1280x720)
 // Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md),
 // rumble (--rumble), mods (--mod, docs/MODS.md), aspect, fullscreen, scale.
@@ -17,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -27,8 +29,10 @@
 #include "dreamcomp/port.h"
 #include "dreamcomp/settings.h"
 
-#ifdef DREAMCOMP_WITH_FRONTEND
 #include "dreamcomp/frontend.h"
+
+#ifndef DREAMCOMP_VERSION
+#define DREAMCOMP_VERSION "?"
 #endif
 
 #if __has_include("dream/render/vk/present.h") && defined(DREAM_WITH_RENDERER)
@@ -48,6 +52,20 @@ namespace {
 
 const PortInfo* g_port = nullptr;
 Settings g_settings;
+// Function-local: the port's generated initialiser may run before this file's globals.
+std::string& port_version_ref() {
+    static std::string v;
+    return v;
+}
+
+// "dreamcomp 0.1.0 · Soulcalibur 0.1.0", bottom-left in the launcher.
+std::string version_line() {
+    std::string v = std::string("dreamcomp ") + DREAMCOMP_VERSION;
+    if (g_port && g_port->title)
+        v += std::string("  \xC2\xB7  ") + g_port->title +
+             (port_version_ref().empty() ? std::string() : " " + port_version_ref());
+    return v;
+}
 
 std::filesystem::path exe_dir(const std::string& argv0) {
 #ifdef _WIN32
@@ -83,13 +101,17 @@ void drop_flag(std::vector<std::string>& a, const char* f, bool takes_value) {
     }
 }
 
-// `rumble` (0-100, default 100) -> --rumble N; `mods = a,b` -> --mod <config dir>/mods/a ...
+// `rumble` (0-100, default 100) -> --rumble N; `volume` (0-100) -> --volume N; `mods = a,b` -> --mod <config dir>/mods/a ...
 // (first wins, docs/MODS.md). A flag the user passed wins over the setting.
 void add_input_and_mod_flags(std::vector<std::string>& args,
                              const std::filesystem::path& config_dir) {
     if (!has_flag(args, "--rumble") && !g_settings.get("rumble").empty()) {
         args.push_back("--rumble");
         args.push_back(std::to_string(std::clamp(g_settings.get_int("rumble", 100), 0, 100)));
+    }
+    if (!has_flag(args, "--volume") && !g_settings.get("volume").empty()) {
+        args.push_back("--volume");
+        args.push_back(std::to_string(std::clamp(g_settings.get_int("volume", 100), 0, 100)));
     }
     if (has_flag(args, "--mod"))
         return;
@@ -174,12 +196,15 @@ public:
         const bool no_launcher =
             has_flag(args, "--no-launcher") || (env_nl && *env_nl && *env_nl != '0');
         const std::string shot = flag_value(args, "--launcher-screenshot");
-        const std::string shot_tab = flag_value(args, "--launcher-tab");
+        std::string shot_tab = flag_value(args, "--launcher-screen");
+        if (shot_tab.empty())
+            shot_tab = flag_value(args, "--launcher-tab");
         const std::string shot_size = flag_value(args, "--launcher-size");
         drop_flag(args, "--launcher", false);
         drop_flag(args, "--no-launcher", false);
         drop_flag(args, "--launcher-screenshot", true);
         drop_flag(args, "--launcher-tab", true);
+        drop_flag(args, "--launcher-screen", true);
         drop_flag(args, "--launcher-size", true);
         // Double-clicked, or the launcher asked for: the play path with the saved settings.
         const bool play = bare || want_launcher;
@@ -219,7 +244,7 @@ public:
             const std::string key = kv.substr(0, eq);
             if (eq != std::string::npos &&
                 (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
-                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" ||
+                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" || key == "volume" ||
                  key == "fps"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
@@ -252,6 +277,10 @@ public:
             else if (fps == "120")
                 args.push_back("--interpolate");
         }
+
+        // For the in-game menu (wants_overlay()).
+        config_path_ = flag_value(args, "--config");
+        exe_dir_ = exe_dir(args[0]);
 
         if (!has_flag(args, "--disc")) {
             const std::string disc = g_settings.get("disc");
@@ -321,6 +350,7 @@ public:
         ctx.exe_dir = exe_dir(args[0]);
         ctx.screenshot = shot;
         ctx.tab = tab;
+        ctx.version = version_line();
         if (const auto x = size.find('x'); x != std::string::npos) {
             ctx.width = std::clamp(std::atoi(size.c_str()), 640, 7680);
             ctx.height = std::clamp(std::atoi(size.c_str() + x + 1), 360, 4320);
@@ -361,10 +391,14 @@ public:
                      "  --launcher             open the launcher window first (the default\n"
                      "                         when started with no arguments)\n"
                      "  --no-launcher          skip it (also DREAMCOMP_NO_LAUNCHER=1)\n"
-                     "  --launcher-screenshot FILE.png  write the launcher's tabs as PNGs, exit\n"
-                     "  --launcher-tab NAME    play, graphics, controls, enhancements or about\n"
+                     "  --launcher-screenshot FILE.png  write the frontend's screens as PNGs, exit\n"
+                     "  --launcher-screen NAME launcher, or settings/TAB (general, controls,\n"
+                     "                         graphics, sound, mods)\n"
+                     "  In a window, Escape or a pad's Select/Back opens the settings panel over\n"
+                     "  the running game; DREAMCOMP_NO_OVERLAY=1 turns that off.\n"
                      "  --launcher-size WxH    launcher window size (default 1280x720)\n"
-                     "  Settings rumble=0..100 and mods=a,b add --rumble and --mod\n"
+                     "  Settings rumble=0..100, volume=0..100 and mods=a,b add --rumble,\n"
+                     "  --volume and --mod\n"
                      "  <settings dir>/mods/<name> (first wins).\n"
                      "  Settings texture_pack=DIR|off and dump_textures=true add --texture-pack\n"
                      "  and --dump-textures (default pack: <settings dir>/textures if present).\n"
@@ -388,6 +422,11 @@ public:
     }
 
     void on_vblank(dream::System& sys) override {
+#ifdef DREAMCOMP_WITH_FRONTEND
+        if (overlay_)
+            overlay_->on_vblank(vblanks_);
+#endif
+        ++vblanks_;
         if (g_port && g_port->widescreen)
             g_port->widescreen(sys, widescreen() ? target_aspect() : 4.0f / 3.0f);
         if (g_port && g_port->on_vblank)
@@ -493,7 +532,64 @@ public:
         }
     }
 
+    // --- the in-game menu (docs/FRONTEND.md) ---
+    bool wants_overlay() override {
+#ifdef DREAMCOMP_WITH_FRONTEND
+        const char* off = std::getenv("DREAMCOMP_NO_OVERLAY");
+        if (off && *off && *off != '0')
+            return false;
+        if (!overlay_) {
+            frontend::OverlayContext oc;
+            oc.settings = &g_settings;
+            oc.port = g_port;
+            oc.config = config_path_;
+            oc.exe_dir = exe_dir_;
+            oc.version = version_line();
+            oc.applied = [this] { apply_live(); };
+            overlay_ = std::make_unique<frontend::Overlay>(oc);
+        }
+        return true;
+#else
+        return false;
+#endif
+    }
+#ifdef DREAMCOMP_WITH_FRONTEND
+    bool on_event(const void* ev) override { return overlay_ && overlay_->on_event(ev); }
+    bool overlay_open() override { return overlay_ && overlay_->is_open(); }
+    void draw_overlay(std::uint32_t* rgba, unsigned w, unsigned h, unsigned vw,
+                      unsigned vh) override {
+        if (overlay_)
+            overlay_->draw(rgba, w, h, vw, vh);
+    }
+#endif
+
+    // After Apply in the in-game menu: what can change without a restart does so now (fit, HUD,
+    // rumble, fullscreen). Everything else is marked "Next start" in the menu.
+    void apply_live() {
+        hud_fix_ = g_settings.get_bool("hud_fix", true);
+        hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
+        apply_presentation();
+        auto& hc = dream::host::host_controls();
+        if (hc.set_rumble)
+            hc.set_rumble(static_cast<float>(std::clamp(g_settings.get_int("rumble", 100), 0, 100)) /
+                          100.0f);
+        if (hc.set_volume)
+            hc.set_volume(static_cast<float>(std::clamp(g_settings.get_int("volume", 100), 0, 100)) /
+                          100.0f);
+        if (hc.set_fullscreen && hc.fullscreen &&
+            hc.fullscreen() != g_settings.get_bool("fullscreen", false))
+            hc.set_fullscreen(g_settings.get_bool("fullscreen", false));
+        launch_dirty_ = false;  // the file now holds what is in effect
+        std::printf("dreamcomp: applied in game: fit %s, hud %s/%s, rumble %d%%, fullscreen %s\n",
+                    g_settings.get("fit", "crop").c_str(), hud_fix_ ? "on" : "off",
+                    hud_edges_ ? "edges" : "center", g_settings.get_int("rumble", 100),
+                    g_settings.get_bool("fullscreen", false) ? "on" : "off");
+    }
+
     void on_stop(dream::System& sys, const char* why) override {
+#ifdef DREAMCOMP_WITH_FRONTEND
+        overlay_.reset();
+#endif
         if (hud_corrected_)
             std::printf("dreamcomp: widescreen HUD: %llu primitives corrected\n",
                         static_cast<unsigned long long>(hud_corrected_));
@@ -518,6 +614,11 @@ private:
     }
 
     bool save_on_exit_ = false;
+    std::filesystem::path config_path_, exe_dir_;
+    std::uint64_t vblanks_ = 0;
+#ifdef DREAMCOMP_WITH_FRONTEND
+    std::unique_ptr<frontend::Overlay> overlay_;
+#endif
     bool hud_fix_ = true, hud_edges_ = true;
     struct HudItem {
         const dream::render::Polygon* poly;
@@ -537,6 +638,8 @@ dream::host::Register g_reg_core(g_core);
 }  // namespace
 
 const PortInfo* port() { return g_port; }
+
+void set_port_version(const char* version) { port_version_ref() = version ? version : ""; }
 Settings& settings() { return g_settings; }
 
 RegisterPort::RegisterPort(const PortInfo& info) { g_port = &info; }

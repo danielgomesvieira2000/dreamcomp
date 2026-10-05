@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,24 @@ public:
     // that backing out of a capture is not also the end of the run; Control::Back still reports
     // the press either way.
     void set_escape_quits(bool yes) noexcept { escape_quits_ = yes; }
+    bool escape_quits() const noexcept { return escape_quits_; }
+
+    // Host overlays (dreamcomp). `event_filter`, when set, sees every SDL_Event first (passed as
+    // `const SDL_Event*`); returning true consumes it, so poll() does nothing else with it. The
+    // keyboard and pad *state* the game reads is unaffected: the caller pauses the guest instead.
+    std::function<bool(const void* sdl_event)> event_filter;
+    // Whether a pad's Back/Select button counts as Control::Menu (the binding screen). An overlay
+    // that takes that button for itself turns this off; F1 still opens the binding screen.
+    void set_pad_menu_button(bool yes) noexcept { pad_menu_button_ = yes; }
+    // While set, the guest pad reads as released (pad_held/pad_pressed false, pad_value 0) for
+    // every player: an overlay that owns the keyboard and pads keeps the game running without
+    // the game also acting on its input.
+    void set_game_input_blocked(bool yes) noexcept { game_input_blocked_ = yes; }
+    bool game_input_blocked() const noexcept { return game_input_blocked_; }
+    // Ends the run at the next poll(), as closing the window would.
+    void request_close() noexcept { running_ = false; }
+    // The window's size in pixels (0 x 0 before create()).
+    void pixel_size(int& w, int& h) const noexcept;
 
     // --- the guest pad, through the player's bindings ------------------------------------------
     //
@@ -202,6 +221,8 @@ private:
 
     bool capturing_ = false, captured_ = false, capture_cancelled_ = false;
     bool escape_quits_ = true;
+    bool pad_menu_button_ = true;
+    bool game_input_blocked_ = false;
     PresentMode wanted_present_ = PresentMode::Fifo;
     Binding capture_{};
 };

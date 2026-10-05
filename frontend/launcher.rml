@@ -1,32 +1,13 @@
 <rml>
 <head>
-	<title>Launcher</title>
+	<title>dreamcomp</title>
 	<link type="text/rcss" href="dreamcomp.rcss"/>
 	<!-- A port's own frontend/port.rcss (LAUNCHER_DIR in dreamcomp_add_port) is linked after this
-	     by the launcher when present, so it can override colours or add art. -->
+	     by the launcher when present, so it can override colours or add art. The screens are
+	     generated into #page by src/frontend/menu_ui.cpp; the same document is shown before the
+	     game (SDL renderer) and over it (CPU renderer, body class "ingame"). -->
 </head>
 <body>
-	<div id="header">
-		<div id="title-block">
-			<div id="game-title">Game</div>
-			<div id="game-sub"></div>
-		</div>
-		<div id="art"></div>
-	</div>
-	<div id="tabbar">
-		<span id="tab-prev" act="tabstep:-1"></span>
-		<div id="tabs"></div>
-		<span id="tab-next" act="tabstep:1"></span>
-	</div>
-	<div id="content"></div>
-	<div id="footer">
-		<div id="hints"></div>
-		<div id="pending"></div>
-		<div id="buttons">
-			<div id="btn-apply" class="button focusable" act="apply">Apply</div>
-			<div id="btn-start" class="button primary focusable" act="start">Start Game</div>
-			<div id="btn-quit" class="button focusable" act="quit">Quit</div>
-		</div>
-	</div>
+	<div id="page"></div>
 </body>
 </rml>

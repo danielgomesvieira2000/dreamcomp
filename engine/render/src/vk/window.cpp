@@ -377,12 +377,22 @@ bool Window::take_capture(Binding& out, bool& cancelled) noexcept {
     return true;
 }
 
+void Window::pixel_size(int& w, int& h) const noexcept {
+    w = h = 0;
+    if (window_)
+        SDL_GetWindowSizeInPixels(window_, &w, &h);
+}
+
 bool Window::poll() {
     // A capture consumes the physical input that ends it, so the key being bound does not also
     // reach the game on the same frame.
     bool captured_this_poll = false;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        // dreamcomp: a host overlay sees each event first and may keep it.
+        if (event_filter && ev.type != SDL_EVENT_QUIT &&
+            ev.type != SDL_EVENT_WINDOW_CLOSE_REQUESTED && event_filter(&ev))
+            continue;
         switch (ev.type) {
             case SDL_EVENT_QUIT:
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -457,7 +467,8 @@ bool Window::poll() {
     for (unsigned i = 0; i < static_cast<unsigned>(Control::Count); ++i) {
         const bool was = held_[i];
         bool now = keys && keys[kScancodes[i]];
-        if (kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID)
+        if (kNavButtons[i] != SDL_GAMEPAD_BUTTON_INVALID &&
+            (pad_menu_button_ || i != static_cast<unsigned>(Control::Menu)))
             for (SDL_Gamepad* g : pads_)
                 if (g && SDL_GetGamepadButton(g, kNavButtons[i]))
                     now = true;
@@ -546,23 +557,24 @@ void Window::set_fullscreen(bool on) noexcept {
 }
 
 bool Window::pad_held(PadControl c) const noexcept {
-    return pad_held_[0][static_cast<unsigned>(c)];
+    return !game_input_blocked_ && pad_held_[0][static_cast<unsigned>(c)];
 }
 
 bool Window::pad_pressed(PadControl c) const noexcept {
-    return pad_pressed_[0][static_cast<unsigned>(c)];
+    return !game_input_blocked_ && pad_pressed_[0][static_cast<unsigned>(c)];
 }
 
 float Window::pad_value(PadControl c) const noexcept {
-    return pad_value_[0][static_cast<unsigned>(c)];
+    return game_input_blocked_ ? 0.0f : pad_value_[0][static_cast<unsigned>(c)];
 }
 
 bool Window::pad_held(unsigned player, PadControl c) const noexcept {
-    return player < kMaxPlayers && pad_held_[player][static_cast<unsigned>(c)];
+    return !game_input_blocked_ && player < kMaxPlayers && pad_held_[player][static_cast<unsigned>(c)];
 }
 
 float Window::pad_value(unsigned player, PadControl c) const noexcept {
-    return player < kMaxPlayers ? pad_value_[player][static_cast<unsigned>(c)] : 0.0f;
+    return (!game_input_blocked_ && player < kMaxPlayers) ? pad_value_[player][static_cast<unsigned>(c)]
+                                                          : 0.0f;
 }
 
 void Window::rumble(unsigned player, float strength, unsigned ms) noexcept {

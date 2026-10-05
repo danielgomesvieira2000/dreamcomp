@@ -9,7 +9,7 @@
 | Runtime | `engine/runtime/` | Guest memory map, SH-4 context, scheduler, Holly interrupts, PVR2 TA/SPG, AICA + ARM7, GD-ROM and BIOS HLE, Maple, dev interpreter fallback | GPL-2.0 |
 | Renderer / window / audio | `engine/render/`, `engine/audio/` | Vulkan PVR2 renderer, presenter, SDL3 window + input, SDL3 audio sink | GPL-2.0 |
 | Launcher | `engine/runtime/boot/boot_main.cpp` | `main()`: flags, wiring, pacing, report | GPL-2.0 |
-| **Frontend** | `src/frontend/`, `frontend/` (`dreamcomp_frontend`, optional) | The launcher window players see first: disc check, settings, Start Game ([FRONTEND.md](FRONTEND.md)); RmlUi + FreeType fetched at configure time | GPL-2.0 (RmlUi MIT, FreeType FTL/GPL-2.0) |
+| **Frontend** | `src/frontend/`, `frontend/` (`dreamcomp_frontend`, optional) | The launcher before the game (disc check, Load/Start Game) and the settings panel, also over the running game on Escape / pad Select ([FRONTEND.md](FRONTEND.md)); RmlUi + FreeType fetched at configure time | GPL-2.0 (RmlUi MIT, FreeType FTL/GPL-2.0) |
 | **dreamcomp port layer** | `include/dreamcomp/`, `src/` (`dreamcomp_core`) | Launcher extension: settings, bare-launch defaults, widescreen, presentation; port API (`PortInfo`); hook macros | GPL-2.0 |
 | **Port** | `ports/<slug>/` (own repo) | `game/<id>.toml`, port sources (`PortInfo`, hooks, enhancements), docs | GPL-2.0 |
 
@@ -57,6 +57,9 @@ Start Game. Keys in use:
 | `fullscreen` | `true`/`false` (false) | `--fullscreen` |
 | `vmu` | card path (`<config dir>/vmu_a1.bin`) | `--vmu` (launcher / bare launch) |
 | `rumble` | 0-100 (100); 0 = off | `--rumble N` |
+| `volume` | 0-100 (100) | `--volume N` |
+| `fps` | `auto` (default), `120`, `60` | `--interpolate-auto` / `--interpolate` |
+| `hud_fix`, `hud_layout` | `true` / `edges` (default), `center` | read by the core's HUD correction ([HUD.md](HUD.md)) |
 | `texture_pack` | directory, `off`, unset = `<settings dir>/textures` if present | `--texture-pack` ([TEXTURE-PACKS.md](TEXTURE-PACKS.md)) |
 | `dump_textures` | `true`/`false` | `--dump-textures <settings dir>/texture_dump` |
 | `mods` | `name1,name2` (first wins) | `--mod <settings dir>/mods/<name>` each ([MODS.md](MODS.md)) |

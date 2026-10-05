@@ -37,7 +37,7 @@ Entry gate: met (boots to menus on the engine).
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |
 | Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
 | Higher frame rate | geometry interpolation between game frames (docs/INTERPOLATION.md); logic stays at 60 | implemented; G1-G3 passed, G4 needs a >60 Hz display (auto mode off on 60 Hz) |
-| Settings UI / launcher (disc picker) | RmlUi launcher before the game ([FRONTEND.md](FRONTEND.md)): disc check, graphics, rumble, texture packs, mods; Apply/Start | phase 1 done 2026-10-05: screenshots of every tab checked, keyboard + synthetic pad navigation and Apply/Start scripted; **no physical pad tried, Daniel has not used it yet**; in-game overlay not started |
+| Settings UI / launcher (disc picker) | N64-recomp-style frontend ([FRONTEND.md](FRONTEND.md)): launcher list (Load/Start Game, Controls, Settings, Mods, Quit) + tabbed settings panel with description pane, Apply, Quit Game confirm; the same panel over the running game on Escape / pad Select (CPU-rendered, composited) | redesign done 2026-10-05: screenshots of every screen and of the in-game panel over a running fight checked; keyboard, synthetic pad and mouse scripted; Apply (live: fit, HUD, rumble, volume, fullscreen) and Quit verified; **no physical pad tried, Daniel has not used it yet**; window move/resize still stalls the game (guest thread pending) |
 
 ## P3 — Platforms
 

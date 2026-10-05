@@ -127,6 +127,9 @@ endif()
 set(_be ${DREAMCOMP_RMLUI_SOURCE_DIR}/Backends)
 add_library(dreamcomp_frontend STATIC
   ${DREAMCOMP_ROOT}/src/frontend/launcher.cpp
+  ${DREAMCOMP_ROOT}/src/frontend/menu_ui.cpp
+  ${DREAMCOMP_ROOT}/src/frontend/overlay.cpp
+  ${DREAMCOMP_ROOT}/src/frontend/soft_render.cpp
   ${DREAMCOMP_ROOT}/src/frontend/launcher_model.cpp
   ${DREAMCOMP_ROOT}/src/frontend/sdl_image_shim.cpp
   ${_be}/RmlUi_Platform_SDL.cpp
@@ -137,7 +140,7 @@ target_include_directories(dreamcomp_frontend
 target_compile_definitions(dreamcomp_frontend PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
 target_compile_features(dreamcomp_frontend PUBLIC cxx_std_20)
 target_link_libraries(dreamcomp_frontend
-  PUBLIC dream::runtime dream::translator dream::render
+  PUBLIC dream::runtime dream::translator dream::render dream::render_vk
   PRIVATE RmlUi::RmlUi SDL3::SDL3)
 # The backends are third-party code: keep the build log about our own.
 set_source_files_properties(${_be}/RmlUi_Platform_SDL.cpp ${_be}/RmlUi_Renderer_SDL.cpp
