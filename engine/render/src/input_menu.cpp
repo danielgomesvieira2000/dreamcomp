@@ -100,9 +100,12 @@ void InputMenu::apply_capture(const Binding& b, bool cancelled) {
     // broken pad. The older binding gives way, and the row it came from is left unbound and
     // visibly so, rather than the new binding being refused with no explanation.
     DeviceBindings& d = editing();
-    for (unsigned i = 0; i < kPadControlCount; ++i)
+    for (unsigned i = 0; i < kPadControlCount; ++i) {
         if (d.b[i] == b)
             d.b[i] = Binding{};
+        if (d.alt[i] == b)
+            d.alt[i] = Binding{};
+    }
     d[c] = b;
     dirty_ = true;
 }

@@ -180,6 +180,12 @@ std::string Bindings::to_text() const {
             const auto c = static_cast<PadControl>(i);
             o << pad_control_key(c) << " = " << d[c].text() << "\n";
         }
+        // The second slots (dreamcomp), only where bound: "a.2 = key:Space".
+        for (unsigned i = 0; i < kPadControlCount; ++i) {
+            const auto c = static_cast<PadControl>(i);
+            if (d.slot(c, 1).bound())
+                o << pad_control_key(c) << ".2 = " << d.slot(c, 1).text() << "\n";
+        }
     };
     section("keyboard", keyboard);
     section("gamepad", gamepad);
@@ -240,12 +246,18 @@ Bindings Bindings::from_text(std::string_view text, std::string* warnings) {
             continue;
         }
         PadControl c{};
-        if (!pad_control_from_key(key, c)) {
+        unsigned slot = 0;
+        std::string name = key;
+        if (name.size() > 2 && name.compare(name.size() - 2, 2, ".2") == 0) {
+            name.resize(name.size() - 2);
+            slot = 1;
+        }
+        if (!pad_control_from_key(name, c)) {
             warn("line " + std::to_string(lineno) + ": unknown control " + key);
             continue;
         }
         if (value.empty()) {
-            (*current)[c] = Binding{};  // deliberately unbound
+            current->slot(c, slot) = Binding{};  // deliberately unbound
             continue;
         }
         Binding b;
@@ -253,7 +265,7 @@ Bindings Bindings::from_text(std::string_view text, std::string* warnings) {
             warn("line " + std::to_string(lineno) + ": cannot read binding " + value);
             continue;
         }
-        (*current)[c] = b;
+        current->slot(c, slot) = b;
     }
     return out;
 }

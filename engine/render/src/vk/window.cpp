@@ -346,9 +346,9 @@ void Window::set_bindings(const Bindings& b) {
     bindings_ = b;
     // Names to codes once, here. Doing it per frame would mean a string lookup per control per
     // frame, and would also mean a typo in the file costing performance rather than being noticed.
-    auto resolve = [](const DeviceBindings& d, Resolved* out, bool keyboard) {
+    auto resolve = [](const DeviceBindings& d, Resolved* out, unsigned slot, bool keyboard) {
         for (unsigned i = 0; i < kPadControlCount; ++i) {
-            const Binding& bind = d.b[i];
+            const Binding& bind = d.slot(static_cast<PadControl>(i), slot);
             out[i] = Resolved{};
             if (!bind.bound())
                 continue;
@@ -369,8 +369,10 @@ void Window::set_bindings(const Bindings& b) {
             // must not silently become scancode 0, which is a real key.
         }
     };
-    resolve(bindings_.keyboard, key_, true);
-    resolve(bindings_.gamepad, gpad_, false);
+    for (unsigned s = 0; s < kBindingSlots; ++s) {
+        resolve(bindings_.keyboard, key_[s], s, true);
+        resolve(bindings_.gamepad, gpad_[s], s, false);
+    }
     SDL_ClearError();
 }
 
@@ -522,19 +524,22 @@ bool Window::poll() {
         float analogue = 0.0f;
         // While capturing, the game gets nothing: a key held down to bind it must not also drive.
         if (!capturing_) {
-            if (p == 0 && keys && key_[i].source == BindSource::Key && keys[key_[i].code])
+            for (unsigned s = 0; s < kBindingSlots; ++s) {
+            const Resolved& kb = key_[s][i];
+            const Resolved& gb = gpad_[s][i];
+            if (p == 0 && keys && kb.source == BindSource::Key && keys[kb.code])
                 digital_on = true;
             if (SDL_Gamepad* g = player_pad) {
-                if (gpad_[i].source == BindSource::Button) {
-                    if (SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(gpad_[i].code)))
+                if (gb.source == BindSource::Button) {
+                    if (SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(gb.code)))
                         digital_on = true;
-                } else if (gpad_[i].source == BindSource::Axis) {
+                } else if (gb.source == BindSource::Axis) {
                     const float raw = static_cast<float>(SDL_GetGamepadAxis(
-                                          g, static_cast<SDL_GamepadAxis>(gpad_[i].code))) /
+                                          g, static_cast<SDL_GamepadAxis>(gb.code))) /
                                       32767.0f;
                     // Only the bound half counts, so left and right are separate bindings on one
                     // stick.
-                    const float half = gpad_[i].sign < 0 ? -raw : raw;
+                    const float half = gb.sign < 0 ? -raw : raw;
                     if (half > dead) {
                         // Rescaled from the dead zone's edge rather than from zero, or the stick
                         // would jump to `dead` the instant it left the centre.
@@ -542,6 +547,7 @@ bool Window::poll() {
                             std::max(analogue, std::min(1.0f, (half - dead) / (1.0f - dead)));
                     }
                 }
+            }
             }
         }
 

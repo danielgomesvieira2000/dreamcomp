@@ -73,6 +73,25 @@ TEST_CASE("bindings round-trip through the file format") {
     }
 }
 
+TEST_CASE("second slots round-trip, and a file without them leaves them empty") {
+    Bindings a = Bindings::defaults();
+    a.keyboard.slot(PadControl::A, 1) = Binding{BindSource::Key, "Space", 1};
+    a.gamepad.slot(PadControl::Start, 1) = Binding{BindSource::Button, "back", 1};
+    const std::string text = a.to_text();
+    CHECK(text.find("a.2 = key:Space") != std::string::npos);
+    std::string w;
+    const Bindings b = Bindings::from_text(text, &w);
+    CHECK(w.empty());
+    CHECK(b.keyboard.slot(PadControl::A, 1).text() == "key:Space");
+    CHECK(b.gamepad.slot(PadControl::Start, 1).text() == "button:back");
+    CHECK(b.keyboard[PadControl::A].text() == "key:Z");  // the first slot is untouched
+    const Bindings d = Bindings::from_text(Bindings::defaults().to_text());
+    for (unsigned i = 0; i < kPadControlCount; ++i) {
+        CHECK(!d.keyboard.slot(static_cast<PadControl>(i), 1).bound());
+        CHECK(!d.gamepad.slot(static_cast<PadControl>(i), 1).bound());
+    }
+}
+
 TEST_CASE("a damaged file leaves the game playable") {
     // The risk the design study names: a rebind that makes the game unplayable with no way back.
     // Anything unreadable must fall back to the default rather than to nothing.

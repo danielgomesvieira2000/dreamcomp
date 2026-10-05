@@ -134,6 +134,14 @@ struct Overlay::Impl {
             if (ctx.applied)
                 ctx.applied();
         };
+        host.bindings_path = [] {
+            const auto& hc = dream::host::host_controls();
+            return hc.bindings_path ? hc.bindings_path() : std::string();
+        };
+        host.bindings_changed = [] {
+            if (dream::host::host_controls().reload_bindings)
+                dream::host::host_controls().reload_bindings();
+        };
         ui = std::make_unique<MenuUi>(cfg, Mode::InGame, host);
         if (!context || !ui->load(context, &err)) {
             std::fprintf(stderr, "overlay: %s\n", err.c_str());
@@ -288,6 +296,10 @@ struct Overlay::Impl {
             vis_w = vw;
             vis_h = vh;
             vis_x = vis_y = 0;
+            // The panel covers the window 1:1, so the mouse maps straight through (map()).
+            draw_x = draw_y = 0.0f;
+            draw_w = static_cast<float>(vw);
+            draw_h = static_cast<float>(vh);
             context->SetDimensions(Rml::Vector2i(static_cast<int>(vw), static_cast<int>(vh)));
             context->SetDensityIndependentPixelRatio(static_cast<float>(vh) / 720.0f);
             need_render = true;

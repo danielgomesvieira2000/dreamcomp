@@ -7,7 +7,7 @@ style, reproduced in dreamcomp's own RML/RCSS; none of RecompFrontend's files ar
 | Part | Where | What |
 |---|---|---|
 | Launcher | its own window before the game (SDL_Renderer) | banded backdrop (or the port's art), title, centred list: **Load Game** (→ **Start Game** once a verified disc is loaded), **Controls**, **Settings**, **Mods**, **Quit**; disc status in one line under the list; version bottom-left |
-| Settings panel | over the launcher, and **in game over the running game** (CPU renderer composited into the frame) | large translucent modal: tabs **General / Controls / Graphics / Sound / Mods**, **Quit Game** (asks "Quit Soulcalibur?", Cancel focused) and **×** top right; option rows left, the focused/hovered option's description right; prompts and **Apply** at the bottom |
+| Settings panel | over the launcher, and **in game over the running game** (rendered at window size, blended on the GPU) | large translucent modal: tabs **General / Controls / Graphics / Sound / Mods**, **Quit Game** (asks "Quit Soulcalibur?", Cancel focused) and **×** top right; option rows left, the focused/hovered option's description right; prompts and **Apply** at the bottom |
 
 ## Using it
 
@@ -31,7 +31,7 @@ in-game panel off.
 | Tab | Rows | Applies in game |
 |---|---|---|
 | General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), About (credits; opens the read-me) | rumble live; frame rate next start |
-| Controls | Rebind buttons… (in game: opens the binding screen; before the game: explains it is in game / F1), players (keyboard + pads, pad 1 = P1 with the keyboard) | — |
+| Controls | RecompFrontend's layout, below | bindings: at once |
 | Graphics | Resolution 1–8×, Aspect ratio (≤ `PortInfo::max_aspect`, only with `PortInfo::widescreen`), Fit to window, Fullscreen, Widescreen HUD, HUD layout (with `PortInfo::hud`) | fit, fullscreen, HUD live; resolution/aspect next start |
 | Sound | Master volume | live |
 | Mods | Texture pack, Open texture folder, Dump textures, mods list (on/off, ▲▼ order, first wins), Open mods folder | next start |
@@ -42,11 +42,31 @@ next start carry a *Next start* badge and say so in the description. Loading a d
 not a setting: a verified disc is remembered at once; a wrong release or unreadable image is
 explained in a message and not kept.
 
+### Controls tab
+
+Copied from the N64 ports' RecompFrontend Controls tab (Wave Race 64 configuration):
+
+| View | Contents |
+|---|---|
+| Player cards | one box per player (`PortInfo::players`, Soulcalibur 2): "Player N", a large PromptFont device glyph (gamepad U+243C / keyboard U+243D), the device name; **Edit Profile** (disabled with no controller). Player 1 = keyboard + controller 1; player N = controller N, in connection order |
+| Mappings | "Editing: Keyboard/Controller profile" + **Go back**; one row per Dreamcast input (Analog Up/Down/Left/Right, A, B, X, Y, L/R Trigger, Start, D-Pad ×4) with **two binding boxes** (either one drives the input) and a round ✗ that clears both; footer: controller/keyboard switch and **Reset to defaults** |
+
+Bindings show as PromptFont glyphs with RecompFrontend's code-point table
+(`recompinput/src/input_types.cpp`: Xbox-style face buttons, A = U+21A7, sticks, triggers, keyboard
+letters as U+FF21…, F1–F12 as U+2460…, PromptFont's swapped up/right arrows); a key PromptFont has
+no glyph for shows its name. Click a box (or Enter / A on it): it turns red and the next key
+(keyboard profile) or button / stick direction past half travel (controller profile) is bound;
+Escape, a pad's Select, or a click elsewhere cancels. Changes are written to the bindings file at
+once (the engine's per-user `bindings.txt`, or `--bindings`) and the running game reloads it
+(`HostControls::reload_bindings`). No Apply, as in RecompFrontend. Bindings are per device type, not
+per player: every controller uses the controller profile. The menu keys (Escape / Select) are fixed.
+The engine's F1 binding screen still exists and edits the first boxes.
+
 ### Input
 
 | Action | Keyboard | Gamepad | Mouse |
 |---|---|---|---|
-| Move | arrows | d-pad / left stick (repeats) | hover |
+| Move | arrows | d-pad / left stick (repeats) | hover (moves the description) |
 | Change a value | ← → on the row | d-pad ← → | click the row or its ‹ › / the slider |
 | Activate | Enter / Space | A | click |
 | Close / back / cancel | Esc / Backspace | B (in game also Select) | × |
@@ -111,6 +131,8 @@ Port art must be the port author's own work, never extracted from the disc (LEGA
 
 ## Not done
 
-- Rebinding happens in the engine's own screen, not in the panel.
+- RecompFrontend's focus pulse, recording-dot pulse and icon SVGs are not reproduced (static
+  colours; PromptFont glyphs stand in for the unlicensed SVGs). No "Assign players" dialog: players
+  follow connection order. No per-player profiles.
 - Gamepad navigation verified with synthetic SDL events only, not a physical pad; input blocking
   while the panel is open is verified by code path, not with a held physical key.

@@ -215,8 +215,8 @@ private:
         int sign = 1;
     };
     Bindings bindings_;
-    Resolved key_[kPadControlCount]{};
-    Resolved gpad_[kPadControlCount]{};
+    Resolved key_[kBindingSlots][kPadControlCount]{};
+    Resolved gpad_[kBindingSlots][kPadControlCount]{};
     bool pad_held_[kMaxPlayers][kPadControlCount]{};
     bool pad_pressed_[kMaxPlayers][kPadControlCount]{};
     float pad_value_[kMaxPlayers][kPadControlCount]{};

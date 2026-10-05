@@ -463,6 +463,127 @@ body.ingame #panel { background-color: rgba(8, 12, 22, 228); }
 .button:focus { border-color: #4fb3ff; background-color: rgba(79, 179, 255, 30); color: #ffffff; }
 .button.attention { border-color: #4fb3ff; color: #8fd0ff; }
 
+/* ---- controls (the N64 recomp layout: player cards, then two slots per input) ---------------- */
+#pbody.wide #pdesc { display: none; }
+#pbody.wide #prows { width: 100%; }
+#ccards {
+	display: flex;
+	flex-direction: row;
+	justify-content: center;
+	padding-top: 36dp;
+}
+.ccard-wrap { width: 232dp; margin: 0 32dp; }
+.ccard-label { font-size: 19dp; color: #dfe5ef; margin-bottom: 8dp; }
+.ccard {
+	height: 232dp;
+	border: 1dp rgba(255, 255, 255, 26);
+	border-radius: 8dp;
+	text-align: center;
+}
+.cicon {
+	font-family: promptfont;
+	font-size: 112dp;
+	line-height: 150dp;
+	padding-top: 10dp;
+	color: #cccccc;
+}
+.ccard.empty .cicon { color: #2c3446; }
+.cdev { font-size: 15dp; color: #b3bdcf; padding: 0 12dp; white-space: nowrap; overflow: hidden; }
+.cdev2 { font-size: 13dp; color: #7d8aa3; padding: 0 12dp; }
+.ccard-wrap .button { display: block; margin-top: 14dp; }
+.cnote { text-align: center; margin-top: 30dp; font-size: 15dp; color: #7d8aa3; }
+.chead {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	height: 48dp;
+	padding: 0 18dp 8dp 26dp;
+}
+.ctitle { font-size: 21dp; font-weight: bold; letter-spacing: 1dp; color: #ffffff; }
+.ctitle.rec { color: #ff6a5a; }
+.chint { font-size: 15dp; color: #7d8aa3; }
+.crow {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	height: 56dp;
+	padding: 2dp 14dp 2dp 26dp;
+	border-radius: 8dp;
+}
+.crow:hover { background-color: rgba(182, 194, 221, 13); }
+.clabel {
+	flex: 1 1 auto;
+	font-size: 20dp;
+	font-weight: bold;
+	letter-spacing: 2dp;
+	color: #dfe5ef;
+}
+.cslots { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; }
+.cslot {
+	width: 150dp;
+	height: 46dp;
+	margin-right: 6dp;
+	text-align: center;
+	color: #cccccc;
+	border: 1dp rgba(182, 194, 221, 13);
+	background-color: rgba(182, 194, 221, 13);
+	border-radius: 8dp;
+}
+.cslot:hover { border-color: rgba(182, 194, 221, 204); background-color: rgba(182, 194, 221, 26); color: #f2f2f2; }
+.cslot:focus { border-color: #f79e08; background-color: rgba(182, 194, 221, 26); color: #ffd794; }
+.cslot.rec { border-color: #ff351f; }
+.bglyph { font-family: promptfont; font-size: 32dp; line-height: 44dp; }
+.btext { font-size: 15dp; font-weight: bold; letter-spacing: 1dp; line-height: 44dp; }
+.brec {
+	display: inline-block;
+	width: 18dp;
+	height: 18dp;
+	margin-top: 13dp;
+	border-radius: 9dp;
+	background-color: #ff351f;
+}
+.ctrash {
+	width: 44dp;
+	height: 44dp;
+	line-height: 42dp;
+	margin-left: 4dp;
+	text-align: center;
+	font-family: promptfont;
+	font-size: 22dp;
+	color: #cccccc;
+	border: 1dp rgba(255, 53, 31, 204);
+	background-color: rgba(255, 53, 31, 13);
+	border-radius: 22dp;
+}
+.ctrash:hover, .ctrash:focus { border-color: #ff351f; background-color: rgba(255, 53, 31, 77); color: #f2f2f2; }
+.ctoggle {
+	display: flex;
+	flex-direction: row;
+	height: 40dp;
+	margin-right: 14dp;
+	border: 2dp #f79e08;
+	border-radius: 22dp;
+}
+.ctoggle .tg {
+	display: block;
+	width: 54dp;
+	height: 36dp;
+	line-height: 36dp;
+	text-align: center;
+	font-family: promptfont;
+	font-size: 26dp;
+	color: rgba(255, 255, 255, 110);
+	border-radius: 18dp;
+}
+.ctoggle .tg.on { background-color: #f79e08; color: #ffffff; }
+.ctoggle:hover { background-color: rgba(247, 158, 8, 77); }
+.ctoggle:focus { border-color: #ffd794; }
+.button.secondary { border-color: rgba(247, 158, 8, 204); background-color: rgba(247, 158, 8, 13); color: #f7c56a; }
+.button.secondary:hover, .button.secondary:focus { border-color: #f79e08; background-color: rgba(247, 158, 8, 77); color: #ffffff; }
+.button.warning { border-color: rgba(255, 254, 0, 204); background-color: rgba(255, 254, 0, 13); color: #fffe9a; }
+.button.warning:hover, .button.warning:focus { border-color: #fffe00; background-color: rgba(255, 254, 0, 60); color: #ffffff; }
+.button.off { opacity: 0.4; cursor: arrow; }
+
 /* ---- message ------------------------------------------------------------------------------- */
 #mshade {
 	position: absolute;

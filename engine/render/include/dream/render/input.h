@@ -68,10 +68,19 @@ struct Binding {
     std::string label() const;
 };
 
+// Two slots per input (dreamcomp), as the N64 recomp frontends have: either one drives the
+// control. operator[] is the first slot, which is all the engine's own binding screen edits.
+constexpr unsigned kBindingSlots = 2;
+
 struct DeviceBindings {
     std::array<Binding, kPadControlCount> b{};
+    std::array<Binding, kPadControlCount> alt{};  // the second slot
     const Binding& operator[](PadControl c) const { return b[static_cast<unsigned>(c)]; }
     Binding& operator[](PadControl c) { return b[static_cast<unsigned>(c)]; }
+    const Binding& slot(PadControl c, unsigned s) const {
+        return (s == 0 ? b : alt)[static_cast<unsigned>(c)];
+    }
+    Binding& slot(PadControl c, unsigned s) { return (s == 0 ? b : alt)[static_cast<unsigned>(c)]; }
 };
 
 struct Bindings {

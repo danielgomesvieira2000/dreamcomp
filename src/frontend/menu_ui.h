@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "dream/render/input.h"
 #include "dream/translator/config/game_config.h"
 #include "launcher_model.h"
 
@@ -42,6 +43,10 @@ struct UiHost {
     std::function<void()> exit_game;      // quit the program
     std::function<void()> open_bindings;  // InGame: the engine's controller screen
     std::function<void()> applied;        // after Apply: settings that apply live
+    // The controller bindings file (empty: the engine's default) and, after the Controls tab
+    // rewrote it, a call to make the running game use it.
+    std::function<std::string()> bindings_path;
+    std::function<void()> bindings_changed;
 };
 
 struct UiConfig {
@@ -132,6 +137,17 @@ private:
     void start_verify(bool sync);
     void open_folder(const std::filesystem::path& dir);
 
+    // Controls tab (N64 recomp layout): player cards, then one profile's mappings with two slots
+    // per input. Bindings are edited in place and saved at once, as RecompFrontend does.
+    std::string controls_cards();
+    std::string controls_mappings();
+    std::string controls_footer();
+    void load_bindings();
+    void save_bindings();
+    dream::render::DeviceBindings& editing();
+    bool capture_event(const SDL_Event& ev);
+    void finish_capture(const dream::render::Binding* b);
+
     UiConfig cfg_;
     Mode mode_;
     UiHost host_;
@@ -162,6 +178,14 @@ private:
     bool dialog_open_ = false;
 
     std::vector<std::string> pads_;
+    dream::render::Bindings bindings_;
+    bool bindings_loaded_ = false;
+    int ctl_view_ = 0;    // 0 player cards, 1 mappings
+    int ctl_device_ = 1;  // 0 keyboard, 1 controller
+    struct Capture {
+        bool active = false;
+        unsigned control = 0, slot = 0;
+    } capture_;
     Rml::Input::KeyIdentifier held_ = Rml::Input::KI_UNKNOWN;
     std::uint64_t repeat_at_ = 0;
     int stick_x_ = 0, stick_y_ = 0;

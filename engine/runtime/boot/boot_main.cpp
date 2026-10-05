@@ -2028,6 +2028,8 @@ int main(int argc, char** argv) {
             hc.set_rumble = [lp](float v) { lp->window.rumble_scale = std::clamp(v, 0.0f, 1.0f); };
             hc.set_fullscreen = [lp](bool on) { lp->window.set_fullscreen(on); };
             hc.fullscreen = [lp] { return lp->window.fullscreen(); };
+            hc.bindings_path = [lp] { return lp->bindings_path; };
+            hc.reload_bindings = [lp] { lp->load_bindings(); };
             hc.set_volume = [&volume_percent](float v) {
                 volume_percent = static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 100.0f + 0.5f);
             };

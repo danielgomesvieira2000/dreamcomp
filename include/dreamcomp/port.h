@@ -26,6 +26,7 @@ class Settings;
 struct PortInfo {
     const char* id = nullptr;     // settings folder name, e.g. "soulcalibur"
     const char* title = nullptr;  // shown in the window title and menus
+    unsigned players = 4;         // player cards in the Controls tab (1..4, Maple ports A-D)
 
     // Widescreen. Called every vblank on the guest thread with the target aspect ratio (4/3 means
     // off: restore the original), so it can re-assert values the game recomputes. `anamorphic`

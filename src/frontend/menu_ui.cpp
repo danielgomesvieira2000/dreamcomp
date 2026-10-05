@@ -6,11 +6,13 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 
 #include "RmlUi_Platform_SDL.h"
+#include "dream/render/vk/window.h"
 #include "dreamcomp/port.h"
 #include "dreamcomp/settings.h"
 
@@ -25,9 +27,10 @@ constexpr const char* kTabs[][2] = {{"general", "General"},
                                     {"mods", "Mods"}};
 constexpr int kTabCount = 5;
 
-// PromptFont code points (PromptFont 1.10 "xbox" set and keyboard keys).
-constexpr const char* kGlyphA = "\xE2\x87\x93";      // U+21D3
-constexpr const char* kGlyphB = "\xE2\x87\x92";      // U+21D2
+// PromptFont code points, the same table RecompFrontend uses (recompinput/src/input_types.cpp):
+// Xbox-style face buttons, whatever the pad.
+constexpr const char* kGlyphA = "\xE2\x86\xA7";      // U+21A7
+constexpr const char* kGlyphB = "\xE2\x86\xA6";      // U+21A6
 constexpr const char* kGlyphLB = "\xE2\x86\x98";     // U+2198
 constexpr const char* kGlyphRB = "\xE2\x86\x99";     // U+2199
 constexpr const char* kGlyphEnter = "\xE2\x90\xAE";  // U+242E
@@ -83,6 +86,128 @@ std::string file_url(const std::filesystem::path& p) {
         }
     }
     return out;
+}
+
+std::string utf8(char32_t c) {
+    std::string o;
+    if (c < 0x80) {
+        o += static_cast<char>(c);
+    } else if (c < 0x800) {
+        o += static_cast<char>(0xC0 | (c >> 6));
+        o += static_cast<char>(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+        o += static_cast<char>(0xE0 | (c >> 12));
+        o += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+        o += static_cast<char>(0x80 | (c & 0x3F));
+    } else {
+        o += static_cast<char>(0xF0 | (c >> 18));
+        o += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+        o += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+        o += static_cast<char>(0x80 | (c & 0x3F));
+    }
+    return o;
+}
+
+constexpr char32_t kDeviceGamepad = 0x243C;   // PF_DEVICE_GAMEPAD
+constexpr char32_t kDeviceKeyboard = 0x243D;  // PF_DEVICE_KEYBOARD
+constexpr char32_t kIconCross = 0x2717;       // PF_ICON_CROSS
+
+// A binding as PromptFont glyphs (RecompFrontend's table), or "" when PromptFont has no glyph
+// for it; the caller then shows the name as text.
+std::string binding_glyph(const dream::render::Binding& b) {
+    using dream::render::BindSource;
+    const std::string& n = b.code;
+    if (b.source == BindSource::Key) {
+        if (n.size() == 1) {
+            const char c = n[0];
+            if (c >= 'A' && c <= 'Z')
+                return utf8(0xFF21 + static_cast<char32_t>(c - 'A'));
+            if (c >= 'a' && c <= 'z')
+                return utf8(0xFF21 + static_cast<char32_t>(c - 'a'));
+            if (c >= '0' && c <= '9')
+                return utf8(0xFF10 + static_cast<char32_t>(c - '0'));
+        }
+        if (n.size() >= 2 && n.size() <= 3 && n[0] == 'F' &&
+            std::all_of(n.begin() + 1, n.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+            const int k = std::atoi(n.c_str() + 1);
+            if (k >= 1 && k <= 12)
+                return utf8(0x2460 + static_cast<char32_t>(k - 1));
+        }
+        // PromptFont's up and right keyboard arrows are swapped (RecompFrontend's note).
+        static const std::pair<const char*, char32_t> keys[] = {
+            {"Left", 0x23F4},      {"Up", 0x23F6},         {"Right", 0x23F5},
+            {"Down", 0x23F7},      {"Escape", 0x242F},     {"PrintScreen", 0x2430},
+            {"ScrollLock", 0x2431}, {"Pause", 0x2432},     {"Insert", 0x2434},
+            {"Home", 0x2435},      {"PageUp", 0x2436},     {"Delete", 0x2437},
+            {"End", 0x2438},       {"PageDown", 0x2439},   {"Space", 0x243A},
+            {"Backspace", 0x242D}, {"Tab", 0x242B},        {"Return", 0x242E},
+            {"CapsLock", 0x242C},  {"Numlock", 0x2433}};
+        for (const auto& [name, cp] : keys)
+            if (n == name)
+                return utf8(cp);
+        if (n == "Left Shift")
+            return "L" + utf8(0x2429);
+        if (n == "Right Shift")
+            return "R" + utf8(0x2429);
+        return {};
+    }
+    if (b.source == BindSource::Button) {
+        static const std::pair<const char*, char32_t> buttons[] = {
+            {"a", 0x21A7},           {"b", 0x21A6},          {"x", 0x21A4},
+            {"y", 0x21A5},           {"back", 0x21FA},       {"guide", 0x21F9},
+            {"start", 0x21FB},       {"leftstick", 0x21BA},  {"rightstick", 0x21BB},
+            {"leftshoulder", 0x2198}, {"rightshoulder", 0x2199}, {"dpup", 0x219F},
+            {"dpdown", 0x21A1},      {"dpleft", 0x219E},     {"dpright", 0x21A0},
+            {"misc1", 0x21E5},       {"paddle1", 0x2276},    {"paddle2", 0x2277},
+            {"paddle3", 0x2278},     {"paddle4", 0x2279},    {"touchpad", 0x21E7}};
+        for (const auto& [name, cp] : buttons)
+            if (n == name)
+                return utf8(cp);
+        return {};
+    }
+    if (b.source == BindSource::Axis) {
+        const bool pos = b.sign >= 0;
+        static const struct {
+            const char* name;
+            char32_t plus, minus;
+        } axes[] = {{"leftx", 0x21C0, 0x21BC},       {"lefty", 0x21C2, 0x21BE},
+                    {"rightx", 0x21C1, 0x21BD},      {"righty", 0x21C3, 0x21BF},
+                    {"lefttrigger", 0x2196, 0x21DC}, {"righttrigger", 0x2197, 0x21DD}};
+        for (const auto& a : axes)
+            if (n == a.name)
+                return utf8(pos ? a.plus : a.minus);
+    }
+    return {};
+}
+
+// The Dreamcast pad's inputs, in the order the Controls tab lists them.
+struct CtlRow {
+    dream::render::PadControl c;
+    const char* label;
+};
+constexpr CtlRow kCtlRows[] = {
+    {dream::render::PadControl::StickUp, "Analog Up"},
+    {dream::render::PadControl::StickDown, "Analog Down"},
+    {dream::render::PadControl::StickLeft, "Analog Left"},
+    {dream::render::PadControl::StickRight, "Analog Right"},
+    {dream::render::PadControl::A, "A"},
+    {dream::render::PadControl::B, "B"},
+    {dream::render::PadControl::X, "X"},
+    {dream::render::PadControl::Y, "Y"},
+    {dream::render::PadControl::LeftTrigger, "L Trigger"},
+    {dream::render::PadControl::RightTrigger, "R Trigger"},
+    {dream::render::PadControl::Start, "Start"},
+    {dream::render::PadControl::Up, "D-Pad Up"},
+    {dream::render::PadControl::Down, "D-Pad Down"},
+    {dream::render::PadControl::Left, "D-Pad Left"},
+    {dream::render::PadControl::Right, "D-Pad Right"},
+};
+
+const char* ctl_label(unsigned control) {
+    for (const auto& r : kCtlRows)
+        if (static_cast<unsigned>(r.c) == control)
+            return r.label;
+    return "";
 }
 
 std::string glyph(const char* g) { return std::string("<span class=\"glyph\">") + g + "</span>"; }
@@ -258,6 +383,11 @@ void MenuUi::open_panel(const std::string& tab) {
             tab_ = i;
     if (!panel_ && mode_ == Mode::Pregame)
         panel_from_ = focus_id();
+    if (!panel_ || mode_ == Mode::InGame) {
+        ctl_view_ = 0;
+        bindings_loaded_ = false;
+        capture_.active = false;
+    }
     panel_ = true;
     focus_first_ = true;
     dirty_ = true;
@@ -492,37 +622,221 @@ std::string MenuUi::tab_general() {
 }
 
 std::string MenuUi::tab_controls() {
-    std::string s;
-    if (mode_ == Mode::InGame)
-        s += row_button("r-rebind", "rebind", "Rebind buttons", "Open",
-                        "The keyboard and controller layout for every player. Opens the binding "
-                        "screen; the game pauses while it is open. F1 opens it too.");
+    if (!bindings_loaded_)
+        load_bindings();
+    return ctl_view_ == 0 ? controls_cards() : controls_mappings();
+}
+
+std::string MenuUi::controls_cards() {
+    const unsigned players =
+        std::clamp(cfg_.port ? cfg_.port->players : 4u, 1u, 4u);
+    std::string s = "<div id=\"ccards\">";
+    for (unsigned p = 0; p < players; ++p) {
+        const bool pad = p < pads_.size();
+        const bool usable = p == 0 || pad;
+        std::string icon = utf8(pad || p > 0 ? kDeviceGamepad : kDeviceKeyboard);
+        std::string dev = pad ? pads_[p] : (p == 0 ? std::string("Keyboard") : "No controller");
+        std::string dev2 = p == 0 && pad ? "+ Keyboard" : (p == 0 ? "Connect a controller at any time" : "");
+        s += "<div class=\"ccard-wrap\"><div class=\"ccard-label\">Player " + std::to_string(p + 1) +
+             "</div><div class=\"ccard" + std::string(usable ? "" : " empty") +
+             "\"><div class=\"cicon\">" + icon + "</div><div class=\"cdev\">" + esc(dev) +
+             "</div><div class=\"cdev2\">" + esc(dev2) + "</div></div>";
+        const std::string id = "c-edit-" + std::to_string(p);
+        s += "<div id=\"" + id + "\" class=\"button secondary" +
+             std::string(usable ? " focusable" : " off") + "\" act=\"" +
+             (usable ? "ctl-edit:" + std::to_string(p) : std::string()) +
+             "\">Edit Profile</div></div>";
+    }
+    s += "</div><div class=\"cnote\">Controllers play in the order they are connected; the "
+         "keyboard plays as player 1. Every controller uses the controller profile.</div>";
+    return s;
+}
+
+std::string MenuUi::controls_mappings() {
+    const bool kb = ctl_device_ == 0;
+    std::string s = "<div class=\"chead\">";
+    if (capture_.active)
+        s += std::string("<div class=\"ctitle rec\">") +
+             (kb ? "Press a key for " : "Press a button or move a stick for ") +
+             ctl_label(capture_.control) + "</div><div class=\"pspacer\"></div><div "
+             "class=\"chint\">" + (kb ? "Esc cancels" : "Select or Esc cancels") + "</div>";
     else
-        s += row_button("r-rebind", "", "Rebind buttons", "",
-                        "Available in game: press Escape or a pad's Select / Back for this panel, "
-                        "or F1 for the binding screen.",
-                        false);
-    s += "<div class=\"psection\">Players</div>";
-    descs_["p-keyboard"] = {"Keyboard", "Plays as player 1, together with the first controller."
-                                        "<br/><br/>Arrows: d-pad<br/>Z X A S: A B X Y<br/>Return: "
-                                        "Start<br/>Q W: triggers",
-                            true};
-    s += "<div id=\"p-keyboard\" class=\"prow player focusable\"><span "
-         "class=\"pad-player\">P1</span><div class=\"plabel\">Keyboard</div></div>";
-    if (pads_.empty())
-        s += "<div class=\"pnote\">No controllers connected. Plug one in at any time.</div>";
-    for (std::size_t i = 0; i < pads_.size(); ++i) {
-        const std::string player = i < 4 ? "P" + std::to_string(i + 1) : "\xE2\x80\x94";
-        const std::string id = "p-pad" + std::to_string(i);
-        descs_[id] = {pads_[i],
-                      i == 0   ? "Plays as player 1, together with the keyboard."
-                      : i < 4 ? "Plays as player " + std::to_string(i + 1) + "."
-                              : "Not used: four players at most.",
-                      true};
-        s += "<div id=\"" + id + "\" class=\"prow player focusable\"><span class=\"pad-player\">" +
-             player + "</span><div class=\"plabel\">" + esc(pads_[i]) + "</div></div>";
+        s += std::string("<div class=\"ctitle\">Editing: ") +
+             (kb ? "Keyboard profile" : "Controller profile") +
+             "</div><div class=\"pspacer\"></div><div id=\"c-back\" class=\"button "
+             "focusable\" act=\"ctl-back\">Go back</div>";
+    s += "</div>";
+    const auto& dev = editing();
+    const std::string how =
+        kb ? "Click a box, or press Enter on it, then press the key to use. Escape cancels."
+           : "Click a box, or press " + glyph(kGlyphA) +
+                 " on it, then press the button or move the stick to use. Select or Escape "
+                 "cancels.";
+    const std::string who = kb ? "The keyboard plays as player 1, together with the first "
+                                 "controller."
+                               : "Every controller uses this profile; controller 1 plays as "
+                                 "player 1, controller 2 as player 2.";
+    for (const auto& r : kCtlRows) {
+        const unsigned i = static_cast<unsigned>(r.c);
+        const std::string key = id_safe(dream::render::pad_control_key(r.c));
+        const std::string row = "b-" + key;
+        descs_[row] = {r.label,
+                       std::string("Two boxes: either binding works.<br/><br/>") + how +
+                           "<br/><br/>" + glyph(utf8(kIconCross).c_str()) +
+                           " clears both.<br/><br/>" + who,
+                       true};
+        s += "<div id=\"" + row + "\" class=\"crow\"><div class=\"clabel\">" + r.label +
+             "</div><div class=\"cslots\">";
+        for (unsigned slot = 0; slot < dream::render::kBindingSlots; ++slot) {
+            const auto& b = dev.slot(r.c, slot);
+            const bool rec = capture_.active && capture_.control == i && capture_.slot == slot;
+            std::string inner;
+            if (rec)
+                inner = "<span class=\"brec\"></span>";
+            else if (b.bound()) {
+                const std::string g = binding_glyph(b);
+                inner = g.empty() ? "<span class=\"btext\">" + esc(b.label()) + "</span>"
+                                  : "<span class=\"bglyph\">" + g + "</span>";
+            }
+            s += "<div id=\"s-" + key + "-" + std::to_string(slot) + "\" class=\"cslot focusable" +
+                 (rec ? " rec" : "") + "\" act=\"bind:" + std::to_string(i) + ":" +
+                 std::to_string(slot) + "\">" + inner + "</div>";
+        }
+        s += "<div id=\"t-" + key + "\" class=\"ctrash focusable\" act=\"ctl-clear:" +
+             std::to_string(i) + "\">" + utf8(kIconCross) + "</div></div></div>";
     }
     return s;
+}
+
+std::string MenuUi::controls_footer() {
+    const bool kb = ctl_device_ == 0;
+    descs_["c-dev"] = {"Controller / keyboard",
+                       "Which profile you are editing. Both are live at once: the keyboard "
+                       "still works with a controller plugged in.",
+                       true};
+    descs_["c-reset"] = {"Reset to defaults",
+                         std::string("Puts every binding in the ") +
+                             (kb ? "keyboard" : "controller") +
+                             " profile back to the original layout.",
+                         true};
+    return std::string("<div id=\"c-dev\" class=\"ctoggle focusable\" act=\"ctl-device\"><span "
+                       "class=\"tg") +
+           (kb ? "" : " on") + "\">" + utf8(kDeviceGamepad) + "</span><span class=\"tg" +
+           (kb ? " on" : "") + "\">" + utf8(kDeviceKeyboard) +
+           "</span></div><div id=\"c-reset\" class=\"button warning focusable\" "
+           "act=\"ctl-reset\">Reset to defaults</div>";
+}
+
+dream::render::DeviceBindings& MenuUi::editing() {
+    return ctl_device_ == 0 ? bindings_.keyboard : bindings_.gamepad;
+}
+
+void MenuUi::load_bindings() {
+    std::string path = host_.bindings_path ? host_.bindings_path() : std::string();
+    if (path.empty())
+        path = dream::render::vk::default_bindings_path();
+    bindings_ = dream::render::Bindings::defaults();
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+    if (in) {
+        std::stringstream ss;
+        ss << in.rdbuf();
+        bindings_ = dream::render::Bindings::from_text(ss.str());
+    }
+    bindings_loaded_ = true;
+}
+
+void MenuUi::save_bindings() {
+    std::string path = host_.bindings_path ? host_.bindings_path() : std::string();
+    if (path.empty())
+        path = dream::render::vk::default_bindings_path();
+    const std::string text = bindings_.to_text();
+    std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
+    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    if (!out) {
+        std::fprintf(stderr, "controls: cannot write %s\n", path.c_str());
+        return;
+    }
+    out.close();
+    std::printf("controls: saved %s\n", path.c_str());
+    if (host_.bindings_changed)
+        host_.bindings_changed();
+}
+
+void MenuUi::finish_capture(const dream::render::Binding* b) {
+    const unsigned control = capture_.control, slot = capture_.slot;
+    capture_.active = false;
+    dirty_ = true;
+    want_focus_ = "s-" + id_safe(dream::render::pad_control_key(
+                             static_cast<dream::render::PadControl>(control))) +
+                  "-" + std::to_string(slot);
+    if (!b) {
+        std::printf("controls: capture cancelled\n");
+        return;
+    }
+    editing().slot(static_cast<dream::render::PadControl>(control), slot) = *b;
+    std::printf("controls: %s %s slot %u = %s\n", ctl_device_ == 0 ? "keyboard" : "controller",
+                ctl_label(control), slot + 1, b->text().c_str());
+    save_bindings();
+}
+
+// While a slot waits for input: the next key (keyboard profile) or button / stick direction
+// (controller profile) becomes the binding. Escape, or a pad's Select, cancels. True: consumed.
+bool MenuUi::capture_event(const SDL_Event& ev) {
+    using dream::render::BindSource;
+    const bool kb = ctl_device_ == 0;
+    switch (ev.type) {
+    case SDL_EVENT_KEY_DOWN: {
+        if (ev.key.repeat)
+            return true;
+        if (ev.key.key == SDLK_ESCAPE) {
+            finish_capture(nullptr);
+            return true;
+        }
+        if (!kb)
+            return true;
+        const char* n = SDL_GetScancodeName(ev.key.scancode);
+        if (!n || !*n)
+            return true;
+        const dream::render::Binding b{BindSource::Key, n, 1};
+        finish_capture(&b);
+        return true;
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+        if (ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
+            finish_capture(nullptr);
+            return true;
+        }
+        if (kb)
+            return true;
+        const char* n =
+            SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(ev.gbutton.button));
+        if (!n || !*n)
+            return true;
+        const dream::render::Binding b{BindSource::Button, n, 1};
+        finish_capture(&b);
+        return true;
+    }
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if (kb || std::abs(static_cast<int>(ev.gaxis.value)) < 16384)
+            return true;
+        const char* n = SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(ev.gaxis.axis));
+        if (!n || !*n)
+            return true;
+        const dream::render::Binding b{BindSource::Axis, n, ev.gaxis.value < 0 ? -1 : 1};
+        finish_capture(&b);
+        return true;
+    }
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        // A click elsewhere cancels; on another box it then starts that one.
+        finish_capture(nullptr);
+        return false;
+    default:
+        return false;
+    }
 }
 
 std::string MenuUi::tab_graphics() {
@@ -628,7 +942,9 @@ std::string MenuUi::page_panel() {
              kTabs[i][1] + "</div>";
     s += "<div class=\"pspacer\"></div><div id=\"p-quit\" class=\"pquit focusable\" "
          "act=\"ask-quit\">Quit Game</div><div id=\"p-close\" class=\"pclose focusable\" "
-         "act=\"close\">\xC3\x97</div></div><div id=\"pbody\"><div id=\"prows\">";
+         "act=\"close\">\xC3\x97</div></div><div id=\"pbody\"" +
+         std::string(tab_ == 1 && ctl_view_ == 0 ? " class=\"wide\"" : "") +
+         "><div id=\"prows\">";
     switch (tab_) {
     case 0: s += tab_general(); break;
     case 1: s += tab_controls(); break;
@@ -644,7 +960,10 @@ std::string MenuUi::page_panel() {
     else
         s += glyph(kGlyphEnter) + hint("Select") + glyph(kGlyphEsc) + hint("Close") +
              keycap("Q") + keycap("E") + hint("Tabs");
-    s += "</div><div id=\"pending\">";
+    s += "</div>";
+    if (tab_ == 1 && ctl_view_ == 1)
+        s += controls_footer();
+    s += "<div id=\"pending\">";
     if (!toast_.empty())
         s += esc(toast_);
     else if (draft_.any_pending())
@@ -838,6 +1157,12 @@ void MenuUi::back() {
         dirty_ = true;
         return;
     }
+    if (panel_ && tab_ == 1 && ctl_view_ == 1) {
+        ctl_view_ = 0;
+        want_focus_ = "c-edit-0";
+        dirty_ = true;
+        return;
+    }
     if (panel_) {
         close_panel();
         return;
@@ -923,6 +1248,39 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
                                     ? file_url(local)
                                     : "https://github.com/danielgomesvieira2000/dreamcomp#readme";
         SDL_OpenURL(url.c_str());
+    } else if (kind == "ctl-edit") {
+        const unsigned p = static_cast<unsigned>(std::atoi(arg.c_str()));
+        ctl_view_ = 1;
+        ctl_device_ = p < pads_.size() ? 1 : 0;
+        want_focus_ = "s-" + id_safe(dream::render::pad_control_key(kCtlRows[0].c)) + "-0";
+        dirty_ = true;
+    } else if (kind == "ctl-back") {
+        back();
+    } else if (kind == "ctl-device") {
+        ctl_device_ = 1 - ctl_device_;
+        capture_.active = false;
+        want_focus_ = "c-dev";
+        dirty_ = true;
+    } else if (kind == "bind") {
+        const auto c2 = arg.find(':');
+        capture_.active = true;
+        capture_.control = static_cast<unsigned>(std::atoi(arg.substr(0, c2).c_str()));
+        capture_.slot = c2 == std::string::npos
+                            ? 0u
+                            : std::min(1u, static_cast<unsigned>(std::atoi(arg.c_str() + c2 + 1)));
+        want_focus_ = focus_id();
+        dirty_ = true;
+    } else if (kind == "ctl-clear") {
+        const auto c = static_cast<dream::render::PadControl>(std::atoi(arg.c_str()));
+        for (unsigned slot = 0; slot < dream::render::kBindingSlots; ++slot)
+            editing().slot(c, slot) = dream::render::Binding{};
+        save_bindings();
+        dirty_ = true;
+    } else if (kind == "ctl-reset") {
+        const auto d = dream::render::Bindings::defaults();
+        editing() = ctl_device_ == 0 ? d.keyboard : d.gamepad;
+        save_bindings();
+        dirty_ = true;
     } else if (kind == "rebind") {
         if (host_.open_bindings)
             host_.open_bindings();
@@ -1096,6 +1454,8 @@ void MenuUi::pad_dir(Rml::Input::KeyIdentifier k) {
 bool MenuUi::handle(const SDL_Event& ev, const MouseMap& map) {
     if (!ctx_)
         return false;
+    if (capture_.active && capture_event(ev))
+        return true;
     switch (ev.type) {
     case SDL_EVENT_KEY_DOWN: {
         const SDL_Keycode k = ev.key.key;
@@ -1224,6 +1584,8 @@ bool MenuUi::script_event(const std::string& k, SDL_Event& e) {
                                       : b == "right" ? SDL_GAMEPAD_BUTTON_DPAD_RIGHT
                                       : b == "a"     ? SDL_GAMEPAD_BUTTON_SOUTH
                                       : b == "b"     ? SDL_GAMEPAD_BUTTON_EAST
+                                      : b == "x"     ? SDL_GAMEPAD_BUTTON_WEST
+                                      : b == "y"     ? SDL_GAMEPAD_BUTTON_NORTH
                                       : b == "lb"    ? SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
                                       : b == "rb"    ? SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
                                       : b == "start" ? SDL_GAMEPAD_BUTTON_START
@@ -1245,11 +1607,14 @@ bool MenuUi::script_event(const std::string& k, SDL_Event& e) {
                              : k == "tab"   ? SDLK_TAB
                              : k == "q"     ? SDLK_Q
                              : k == "e"     ? SDLK_E
+                             : k == "space" ? SDLK_SPACE
+                             : k == "k"     ? SDLK_K
                                             : SDLK_UNKNOWN;
     if (code == SDLK_UNKNOWN)
         return false;
     e.type = SDL_EVENT_KEY_DOWN;
     e.key.key = code;
+    e.key.scancode = SDL_GetScancodeFromKey(code, nullptr);
     e.key.down = true;
     return true;
 }

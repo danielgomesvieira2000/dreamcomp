@@ -89,6 +89,10 @@ struct HostControls {
     std::function<void(bool)> set_fullscreen;
     std::function<bool()> fullscreen;
     std::function<void(float)> set_volume;       // 0..1, master output level
+    // The controller bindings file (dreamcomp): an overlay that edits bindings writes this file,
+    // then calls reload_bindings so the game uses them at once.
+    std::function<std::string()> bindings_path;
+    std::function<void()> reload_bindings;
 };
 
 inline HostControls& host_controls() {
