@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <string>
@@ -199,15 +200,30 @@ public:
     void set_qacr(unsigned n, std::uint32_t v) noexcept { qacr_[n & 1] = v & 0x1Cu; }
     std::uint32_t qacr(unsigned n) const noexcept { return qacr_[n & 1]; }
 
-    // Memory interface
-    std::uint8_t read8(std::uint32_t a) override;
-    std::uint16_t read16(std::uint32_t a) override;
-    std::uint32_t read32(std::uint32_t a) override;
-    std::uint64_t read64(std::uint32_t a) override;
-    void write8(std::uint32_t a, std::uint8_t v) override;
-    void write16(std::uint32_t a, std::uint16_t v) override;
-    void write32(std::uint32_t a, std::uint32_t v) override;
-    void write64(std::uint32_t a, std::uint64_t v) override;
+    // Memory interface (the inline RAM fast path is in the base class)
+    std::uint8_t read8_slow(std::uint32_t a) override;
+    std::uint16_t read16_slow(std::uint32_t a) override;
+    std::uint32_t read32_slow(std::uint32_t a) override;
+    std::uint64_t read64_slow(std::uint32_t a) override;
+    void write8_slow(std::uint32_t a, std::uint8_t v) override;
+    void write16_slow(std::uint32_t a, std::uint16_t v) override;
+    void write32_slow(std::uint32_t a, std::uint32_t v) override;
+    void write64_slow(std::uint32_t a, std::uint64_t v) override;
+    // Re-derives `fast_stores`: on unless a development feature must see every store. Call after
+    // arming or disarming the write hash, the watch or the journal (set_journaling does).
+    void refresh_fast_path() noexcept {
+        // DREAM_NO_FASTPATH=1 sends every access down the slow path, for A/B measurements.
+        static const bool disabled = [] {
+            const char* e = std::getenv("DREAM_NO_FASTPATH");
+            return e && *e && *e != '0';
+        }();
+        fast_ram = disabled ? nullptr : ram_.get();
+        fast_stores = fast_ram && !journaling && !hash_writes && !(on_watch_write && watch_lo < watch_hi);
+    }
+    void set_journaling(bool on) noexcept {
+        journaling = on;
+        refresh_fast_path();
+    }
     void sq_write32(std::uint32_t a, std::uint32_t v) override;
     void sq_flush(std::uint32_t a) override;
 

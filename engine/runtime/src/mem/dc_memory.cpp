@@ -64,7 +64,9 @@ DcMemory::DcMemory()
       aram_(new std::uint8_t[kAramSize]()),
       bios_(new std::uint8_t[kBiosSize]()),
       flash_(new std::uint8_t[kFlashSize]()),
-      ocram_(new std::uint8_t[kOcramSize]()) {}
+      ocram_(new std::uint8_t[kOcramSize]()) {
+    refresh_fast_path();
+}
 
 void DcMemory::map_mmio(std::uint32_t lo, std::uint32_t hi, MmioHandler* h) {
     phys_mmio_.push_back({lo, hi, h});
@@ -234,13 +236,13 @@ void DcMemory::redo_journal() {
     }
 }
 
-std::uint8_t DcMemory::read8(std::uint32_t a) {
+std::uint8_t DcMemory::read8_slow(std::uint32_t a) {
     return load<std::uint8_t>(a);
 }
-std::uint16_t DcMemory::read16(std::uint32_t a) {
+std::uint16_t DcMemory::read16_slow(std::uint32_t a) {
     return load<std::uint16_t>(a);
 }
-std::uint32_t DcMemory::read32(std::uint32_t a) {
+std::uint32_t DcMemory::read32_slow(std::uint32_t a) {
     if ((a & 0xFFFFFFC0u) == 0xFF000000u) {  // CCN: MMU and cache control, exception registers
         switch (a & 0x3Cu) {
             case 0x20:
@@ -259,7 +261,7 @@ std::uint32_t DcMemory::read32(std::uint32_t a) {
     }
     return load<std::uint32_t>(a);
 }
-std::uint64_t DcMemory::read64(std::uint32_t a) {
+std::uint64_t DcMemory::read64_slow(std::uint32_t a) {
     const Target t = resolve(a, 8, false);
     if (t.kind == Target::kBytes) {
         std::uint64_t v;
@@ -271,13 +273,13 @@ std::uint64_t DcMemory::read64(std::uint32_t a) {
                (static_cast<std::uint64_t>(t.mmio->read(t.mmio_addr + 4, 4)) << 32);
     return 0;
 }
-void DcMemory::write8(std::uint32_t a, std::uint8_t v) {
+void DcMemory::write8_slow(std::uint32_t a, std::uint8_t v) {
     store<std::uint8_t>(a, v);
 }
-void DcMemory::write16(std::uint32_t a, std::uint16_t v) {
+void DcMemory::write16_slow(std::uint32_t a, std::uint16_t v) {
     store<std::uint16_t>(a, v);
 }
-void DcMemory::write32(std::uint32_t a, std::uint32_t v) {
+void DcMemory::write32_slow(std::uint32_t a, std::uint32_t v) {
     if ((a & 0xFFFFFFC0u) == 0xFF000000u) {
         switch (a & 0x3Cu) {
             case 0x20:
@@ -302,7 +304,7 @@ void DcMemory::write32(std::uint32_t a, std::uint32_t v) {
     }
     store<std::uint32_t>(a, v);
 }
-void DcMemory::write64(std::uint32_t a, std::uint64_t v) {
+void DcMemory::write64_slow(std::uint32_t a, std::uint64_t v) {
     const Target t = resolve(a, 8, true);
     if (t.kind == Target::kBytes) {
         const std::uint32_t lo = static_cast<std::uint32_t>(v);

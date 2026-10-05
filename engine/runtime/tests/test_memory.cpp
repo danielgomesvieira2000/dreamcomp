@@ -172,12 +172,12 @@ TEST_CASE("memory: the write journal puts memory back exactly as it was") {
     m.write32(ram + 4, 0x22222222u);
     m.write16(ram + 8, 0x3333u);
 
-    m.journaling = true;
+    m.set_journaling(true);
     m.write32(ram, 0xAAAAAAAAu);
     m.write32(ram, 0xBBBBBBBBu);      // the same location twice
     m.write32(ram + 4, 0x22222222u);  // written with the value it already held
     m.write8(ram + 8, 0x44u);
-    m.journaling = false;
+    m.set_journaling(false);
     CHECK(m.journal.size() == 4);
     CHECK(m.read32(ram) == 0xBBBBBBBBu);
 
@@ -206,12 +206,12 @@ TEST_CASE("memory: a device write marks the journal as one that cannot be undone
     DcMemory m;
     m.map_mmio(0x005F6C00u, 0x005F6D00u, &dev);
 
-    m.journaling = true;
+    m.set_journaling(true);
     m.write32(0x8C010000u, 1);
     CHECK_FALSE(m.journal_saw_device);
     m.write32(0xA05F6C00u, 1);
     CHECK(m.journal_saw_device);
-    m.journaling = false;
+    m.set_journaling(false);
     CHECK(dev.writes == 1);
     // The device write is not in the journal, so undoing cannot silently half-revert it.
     CHECK(m.journal.size() == 1);

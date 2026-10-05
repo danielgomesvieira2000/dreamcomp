@@ -16,17 +16,72 @@ namespace dream {
 class Memory {
 public:
     virtual ~Memory() = default;
-    virtual std::uint8_t read8(std::uint32_t addr) = 0;
-    virtual std::uint16_t read16(std::uint32_t addr) = 0;
-    virtual std::uint32_t read32(std::uint32_t addr) = 0;
-    virtual std::uint64_t read64(std::uint32_t addr) = 0;
-    virtual void write8(std::uint32_t addr, std::uint8_t v) = 0;
-    virtual void write16(std::uint32_t addr, std::uint16_t v) = 0;
-    virtual void write32(std::uint32_t addr, std::uint32_t v) = 0;
-    virtual void write64(std::uint32_t addr, std::uint64_t v) = 0;
+
+    // RAM fast path (dreamcomp; engine docs/cpu-performance-study.md section 3). Emitted code
+    // calls these inline accessors; main RAM (area 3, every P0-P3 alias and the three mirrors) is
+    // a mask and an index, and everything else -- MMIO, VRAM views, store queues, P4, faults --
+    // goes to the virtual *_slow path exactly as before. `fast_ram` is null for implementations
+    // that want every access (BareMemory). `fast_stores` is cleared by the implementation while a
+    // development feature must see every store (write hash, watch, replay journal).
+    std::uint8_t* fast_ram = nullptr;
+    bool fast_stores = false;
+    static constexpr bool is_ram(std::uint32_t a) noexcept {
+        // Area 3 through P0-P3 only: P4 (0xE0000000 up) is never RAM, whatever its bits say.
+        return (a & 0x1C000000u) == 0x0C000000u && a < 0xE0000000u;
+    }
+
+    std::uint8_t read8(std::uint32_t a) {
+        if (fast_ram && is_ram(a))
+            return fast_ram[a & 0x00FFFFFFu];
+        return read8_slow(a);
+    }
+    std::uint16_t read16(std::uint32_t a) { return fast_load<std::uint16_t>(a, &Memory::read16_slow); }
+    std::uint32_t read32(std::uint32_t a) { return fast_load<std::uint32_t>(a, &Memory::read32_slow); }
+    std::uint64_t read64(std::uint32_t a) { return fast_load<std::uint64_t>(a, &Memory::read64_slow); }
+    void write8(std::uint32_t a, std::uint8_t v) {
+        if (fast_stores && is_ram(a))
+            fast_ram[a & 0x00FFFFFFu] = v;
+        else
+            write8_slow(a, v);
+    }
+    void write16(std::uint32_t a, std::uint16_t v) { fast_store(a, v, &Memory::write16_slow); }
+    void write32(std::uint32_t a, std::uint32_t v) { fast_store(a, v, &Memory::write32_slow); }
+    void write64(std::uint32_t a, std::uint64_t v) { fast_store(a, v, &Memory::write64_slow); }
+
+    virtual std::uint8_t read8_slow(std::uint32_t addr) = 0;
+    virtual std::uint16_t read16_slow(std::uint32_t addr) = 0;
+    virtual std::uint32_t read32_slow(std::uint32_t addr) = 0;
+    virtual std::uint64_t read64_slow(std::uint32_t addr) = 0;
+    virtual void write8_slow(std::uint32_t addr, std::uint8_t v) = 0;
+    virtual void write16_slow(std::uint32_t addr, std::uint16_t v) = 0;
+    virtual void write32_slow(std::uint32_t addr, std::uint32_t v) = 0;
+    virtual void write64_slow(std::uint32_t addr, std::uint64_t v) = 0;
     // Store queue: writes to 0xE0000000..0xE3FFFFFF buffer in the SQ; PREF flushes 32 bytes.
     virtual void sq_write32(std::uint32_t addr, std::uint32_t v) = 0;
     virtual void sq_flush(std::uint32_t addr) = 0;
+
+private:
+    // An access that would run past the end of RAM (an unaligned word at the last byte) takes the
+    // slow path, which knows what the hardware does there.
+    template <typename T>
+    T fast_load(std::uint32_t a, T (Memory::*slow)(std::uint32_t)) {
+        const std::uint32_t o = a & 0x00FFFFFFu;
+        if (fast_ram && is_ram(a) && o <= 0x01000000u - sizeof(T)) {
+            T v;
+            std::memcpy(&v, fast_ram + o, sizeof(T));
+            return v;
+        }
+        return (this->*slow)(a);
+    }
+    template <typename T>
+    void fast_store(std::uint32_t a, T v, void (Memory::*slow)(std::uint32_t, T)) {
+        const std::uint32_t o = a & 0x00FFFFFFu;
+        if (fast_stores && is_ram(a) && o <= 0x01000000u - sizeof(T)) {
+            std::memcpy(fast_ram + o, &v, sizeof(T));
+            return;
+        }
+        (this->*slow)(a, v);
+    }
 };
 
 // 16 MB of main RAM at every alias of area 3 (0x0C000000 physical), nothing else. Accesses outside
@@ -39,30 +94,30 @@ public:
 
     std::uint8_t* ram() noexcept { return ram_.get(); }
 
-    std::uint8_t read8(std::uint32_t a) override { return ram_[idx(a)]; }
-    std::uint16_t read16(std::uint32_t a) override {
+    std::uint8_t read8_slow(std::uint32_t a) override { return ram_[idx(a)]; }
+    std::uint16_t read16_slow(std::uint32_t a) override {
         std::uint16_t v;
         std::memcpy(&v, ram_.get() + idx(a), 2);
         return v;
     }
-    std::uint32_t read32(std::uint32_t a) override {
+    std::uint32_t read32_slow(std::uint32_t a) override {
         std::uint32_t v;
         std::memcpy(&v, ram_.get() + idx(a), 4);
         return v;
     }
-    std::uint64_t read64(std::uint32_t a) override {
+    std::uint64_t read64_slow(std::uint32_t a) override {
         std::uint64_t v;
         std::memcpy(&v, ram_.get() + idx(a), 8);
         return v;
     }
-    void write8(std::uint32_t a, std::uint8_t v) override { ram_[idx(a)] = v; }
-    void write16(std::uint32_t a, std::uint16_t v) override {
+    void write8_slow(std::uint32_t a, std::uint8_t v) override { ram_[idx(a)] = v; }
+    void write16_slow(std::uint32_t a, std::uint16_t v) override {
         std::memcpy(ram_.get() + idx(a), &v, 2);
     }
-    void write32(std::uint32_t a, std::uint32_t v) override {
+    void write32_slow(std::uint32_t a, std::uint32_t v) override {
         std::memcpy(ram_.get() + idx(a), &v, 4);
     }
-    void write64(std::uint32_t a, std::uint64_t v) override {
+    void write64_slow(std::uint32_t a, std::uint64_t v) override {
         std::memcpy(ram_.get() + idx(a), &v, 8);
     }
     void sq_write32(std::uint32_t a, std::uint32_t v) override { sq_[(a >> 2) & 15] = v; }

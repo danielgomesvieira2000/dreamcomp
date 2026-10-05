@@ -74,7 +74,7 @@ void Replay::enter_impl(std::uint32_t function) {
         // A handful of attempts blacklists the entry point and the main loop, and everything short
         // enough to compare then gets a turn.
         too_long_.insert(active_);
-        memory_.journaling = false;
+        memory_.set_journaling(false);
         memory_.journal.clear();
         active_ = 0;
     }
@@ -87,7 +87,7 @@ void Replay::enter_impl(std::uint32_t function) {
     entry_interrupts_ = interrupts ? *interrupts : 0;
     memory_.journal.clear();
     memory_.journal_saw_device = false;
-    memory_.journaling = true;
+    memory_.set_journaling(true);
 }
 
 void Replay::exit(std::uint32_t function) {
@@ -98,7 +98,7 @@ void Replay::exit(std::uint32_t function) {
     if (active_ != function)
         return;
     active_ = 0;
-    memory_.journaling = false;
+    memory_.set_journaling(false);
 
     // An interrupt delivered while the function ran put the handler's stores into the journal, and
     // the replay does not deliver one. The two would differ for a reason that is not a bug.
@@ -129,7 +129,7 @@ void Replay::exit(std::uint32_t function) {
     memory_.undo_journal();
     memory_.journal.clear();
     memory_.journal_saw_device = false;
-    memory_.journaling = true;
+    memory_.set_journaling(true);
 
     ctx_ = entry_;
     ctx_.pc = function;
@@ -157,7 +157,7 @@ void Replay::exit(std::uint32_t function) {
         unwound = true;
     }
     replaying_ = false;
-    memory_.journaling = false;
+    memory_.set_journaling(false);
 
     if (unwound || stop != Stop::Returned || memory_.journal_saw_device) {
         // The interpreted run did something the comparison cannot account for. Put memory back the

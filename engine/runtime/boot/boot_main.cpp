@@ -2051,6 +2051,7 @@ int main(int argc, char** argv) {
     }
     const char* stop = "returned from the entry function";
     int rc = 0;
+    sys.memory.refresh_fast_path();  // after the write hash / watch flags are final
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     try {
