@@ -36,7 +36,7 @@ Entry gate: met (boots to menus on the engine).
 | Texture dump / replacement packs | content hash (XXH64, scheme v1) over the raw VRAM bytes the decoder reads (+ used palette colours / VQ codebook); `--dump-textures DIR`, `--texture-pack DIR`; settings `dump_textures`, `texture_pack` (default `<config dir>/textures`); in-house PNG codec | works (Soulcalibur: dump + 1 replaced texture verified in-game); no manifest, no mip chain, no async preload yet. `docs/TEXTURE-PACKS.md` |
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |
 | Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
-| Higher frame rate | geometry interpolation between game frames (docs/INTERPOLATION.md); logic stays at 60 | G1 passed (97.8-100 % of vertices pair across frames); implementation next |
+| Higher frame rate | geometry interpolation between game frames (docs/INTERPOLATION.md); logic stays at 60 | implemented; G1-G3 passed, G4 needs a >60 Hz display (auto mode off on 60 Hz) |
 | Settings UI / launcher (disc picker) | RmlUi launcher before the game ([FRONTEND.md](FRONTEND.md)): disc check, graphics, rumble, texture packs, mods; Apply/Start | phase 1 done 2026-10-05: screenshots of every tab checked, keyboard + synthetic pad navigation and Apply/Start scripted; **no physical pad tried, Daniel has not used it yet**; in-game overlay not started |
 
 ## P3 — Platforms

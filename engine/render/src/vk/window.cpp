@@ -529,6 +529,14 @@ bool Window::poll() {
     return running_;
 }
 
+float Window::refresh_rate() const noexcept {
+    if (!window_)
+        return 0.0f;
+    const SDL_DisplayID id = SDL_GetDisplayForWindow(window_);
+    const SDL_DisplayMode* mode = id ? SDL_GetCurrentDisplayMode(id) : nullptr;
+    return mode ? mode->refresh_rate : 0.0f;
+}
+
 void Window::set_fullscreen(bool on) noexcept {
     if (!window_)
         return;

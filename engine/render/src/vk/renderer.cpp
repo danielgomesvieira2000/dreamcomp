@@ -364,6 +364,11 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         out += kFloatsPerVertex;
     }
     const VkDeviceSize bytes = staging_.size() * sizeof(float);
+    // A ring of vertex buffers (dreamcomp): with renders pipelined, and with an interpolated
+    // frame drawn beside each real one, the buffer a previous draw is still reading must not be
+    // rewritten. Each target waits for its own previous frame, so four in rotation suffice.
+    HostBuffer& vertices_ = vertex_ring_[ring_next_];
+    ring_next_ = (ring_next_ + 1) % kVertexRing;
     if (!vertices_.ensure(*ctx_, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
         return;
     vertices_.write(staging_.data(), static_cast<std::size_t>(bytes));
@@ -485,7 +490,7 @@ void Renderer::destroy() {
         vkDestroyDescriptorSetLayout(ctx_->device(), set_layout_, nullptr);
         set_layout_ = VK_NULL_HANDLE;
     }
-    vertices_.destroy();
+    for (auto& b : vertex_ring_) b.destroy();
     if (layout_) {
         vkDestroyPipelineLayout(ctx_->device(), layout_, nullptr);
         layout_ = VK_NULL_HANDLE;

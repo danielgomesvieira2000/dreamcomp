@@ -15,7 +15,7 @@
 
 #include "dream/render/display_list.h"
 
-#include "dreamcomp/geometry_match.h"
+#include "dream/render/interpolate.h"
 
 namespace {
 
@@ -48,8 +48,8 @@ int main(int argc, char** argv) {
     }
     const auto& fa = a.frame();
     const auto& fb = b.frame();
-    std::vector<dreamcomp::StripPair> pairs;
-    const auto st = dreamcomp::match_frames(fa, fb, window, pairs);
+    std::vector<dream::render::StripPair> pairs;
+    const auto st = dream::render::match_frames(fa, fb, window, pairs);
     std::vector<float> disp;
     for (const auto& p : pairs) {
         const auto& pa = fa.lists[p.list][p.a];

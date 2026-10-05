@@ -14,6 +14,7 @@ add_library(dream_render STATIC
   src/background.cpp
   src/fog.cpp
   src/overlay.cpp
+  src/interpolate.cpp
   src/input.cpp
   src/input_menu.cpp
 )

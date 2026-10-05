@@ -11,8 +11,8 @@ keeps running at its own 60 Hz (series rule: never change the logic rate).
 ## Method
 
 1. Each game render produces a decoded `Frame` (strips with screen-space vertices).
-2. Strips of frame N+1 are paired with strips of frame N (`dreamcomp::match_frames`,
-   `include/dreamcomp/geometry_match.h`): same parameter words and vertex count, in submission
+2. Strips of frame N+1 are paired with strips of frame N (`dream::render::match_frames`,
+   `engine/render/include/dream/render/interpolate.h`): same parameter words and vertex count, in submission
    order, with a small lookahead for strips that appear or disappear.
 3. An in-between frame is drawn with every paired strip's vertices blended at t = 0.5 (position
    and 1/w; texture coordinates and colours from the newer frame), unpaired strips as in the newer
@@ -26,11 +26,29 @@ keeps running at its own 60 Hz (series rule: never change the logic rate).
 | Gate | Measurement | Status |
 |---|---|---|
 | G1 Correspondence | `dreamcomp_ta_match` on consecutive fight frames: ≥ 95 % of vertices paired, displacement distribution plausible | **passed** 2026-10-05: 7 consecutive Soulcalibur fight pairs, 97.8-100 % of vertices paired, median 2-3 px / p90 5-13 px per frame; outliers are off-screen or behind-camera vertices (clipped by the game) and a few mispairs, so strips moving implausibly far are not blended |
-| G2 Visual | in-between frames look like a frame of the game (no torn strips) on contact sheets of fights, menus, cuts | — |
-| G3 Cost | per-frame matching + second render within budget on Iris Xe (`DREAM_PROFILE=1`) | — |
-| G4 Pacing | 120 Hz output smooth (frame times even: `frame_motion.py`-style check), audio unaffected | — |
+| G2 Visual | in-between frames look like a frame of the game (no torn strips) on contact sheets of fights, menus, cuts | **passed for fights** 2026-10-05 (`DREAM_SHOT_INTERP=1` sequences: real, blended, real); menus/cuts not inspected frame by frame (23 cuts detected and skipped in 2700 frames) |
+| G3 Cost | per-frame matching + second render within budget on Iris Xe (`DREAM_PROFILE=1`) | **passed**: 0.03-0.10 ms per blend; unthrottled 3.9x real time with interpolation vs 4.1x without (scale 1) |
+| G4 Pacing | 120 Hz output smooth (frame times even), audio unaffected | **not verifiable here**: Daniel's laptop panel is 60 Hz. Forced on a 60 Hz panel the second present blocks on vsync and the game runs at 0.5x, hence `fps = auto` (on only above 60 Hz) |
 
 ## Tools
 
 - `dreamcomp_ta_match A.ta B.ta [--window N]` — pairing coverage and displacement.
 - `--dump-ta FILE --dump-ta-at-frame N --dump-ta-count K` — K consecutive display lists.
+
+## Using it
+
+Setting `fps`: `auto` (default: blend only when the window's display refreshes above 60 Hz),
+`120` (always; on a 60 Hz panel this halves the game's speed), `60` (off). Engine flags:
+`--interpolate`, `--interpolate-auto`. The end-of-run report prints an `interpolation:` line
+(blended frames, cuts, paired vertices, strips not blended, cost). `DREAM_SHOT_INTERP=1` makes
+every screenshot also write the blended frame before it (`screenshot-NNN-interp.ppm`).
+
+## Implementation
+
+- `engine/render/src/interpolate.cpp`: `match_frames`, `blend_frames` (cut detection on the
+  median motion of paired on-screen strips, per-strip jump limit, depth range covering both
+  frames).
+- `engine/runtime/boot/boot_main.cpp` (`Live`): keeps the previous decoded frame (after the HUD
+  correction, so the HUD blends to itself), renders the blended frame into a second offscreen
+  target before the real one, presents it ahead of the real frame, which follows half a guest
+  frame later. The renderer rotates four vertex buffers so two targets in flight never share one.

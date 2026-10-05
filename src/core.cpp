@@ -219,7 +219,8 @@ public:
             const std::string key = kv.substr(0, eq);
             if (eq != std::string::npos &&
                 (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
-                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods"))
+                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" ||
+                 key == "fps"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
         // The aspect flags decide the render target's shape, which the engine needs before it
@@ -242,6 +243,15 @@ public:
         }
         if (g_settings.get_bool("fullscreen", false) && !has_flag(args, "--fullscreen"))
             args.push_back("--fullscreen");
+        // Frame rate (docs/INTERPOLATION.md): auto blends a frame between game frames on displays
+        // above 60 Hz; 120 forces it; 60 is the game's own rate only.
+        if (!has_flag(args, "--interpolate") && !has_flag(args, "--interpolate-auto")) {
+            const std::string fps = g_settings.get("fps", "auto");
+            if (fps == "auto")
+                args.push_back("--interpolate-auto");
+            else if (fps == "120")
+                args.push_back("--interpolate");
+        }
 
         if (!has_flag(args, "--disc")) {
             const std::string disc = g_settings.get("disc");

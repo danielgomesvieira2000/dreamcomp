@@ -90,7 +90,9 @@ private:
     TextureCache textures_;
     std::unordered_map<std::uint64_t, VkDescriptorSet> frame_sets_;
     VkDescriptorSet fallback_set_ = VK_NULL_HANDLE;
-    HostBuffer vertices_;
+    static constexpr unsigned kVertexRing = 4;
+    HostBuffer vertex_ring_[kVertexRing];
+    unsigned ring_next_ = 0;
     std::vector<float> staging_;  // vertex data in the shader's layout
     std::string error_;
 };

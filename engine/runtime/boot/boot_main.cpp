@@ -55,6 +55,7 @@
 #include "dream/render/background.h"
 #include "dream/render/display_list.h"
 #include "dream/render/framebuffer.h"
+#include "dream/render/interpolate.h"
 #include "dream/render/input_menu.h"
 #include "dream/render/overlay.h"
 #include "dream/render/vk/offscreen.h"
@@ -151,6 +152,17 @@ struct Live {
             error = offscreen.error();
             return false;
         }
+        if (interpolate && interpolate_only_above_60) {
+            const float hz = window.refresh_rate();
+            interpolate = hz > 61.0f;
+            std::printf("interpolation: display %.0f Hz, %s\n", static_cast<double>(hz),
+                        interpolate ? "on" : "off (60 Hz or unknown)");
+        }
+        // Geometry interpolation (dreamcomp): a second target for the frame between two renders.
+        if (interpolate && !interp_off.create(window.context(), w, h)) {
+            error = interp_off.error();
+            return false;
+        }
         // The renderer's pipelines are built against the offscreen render pass, not the window's:
         // that is where the geometry is drawn.
         if (!renderer.create(window.context(), offscreen.render_pass())) {
@@ -190,6 +202,29 @@ struct Live {
         renderer.textures().begin_frame();  // LRU eviction between renders (dreamcomp)
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))
             ++palette_changes;
+        if (interpolate) {
+            interp_ready = false;
+            if (have_prev) {
+                const auto t0 = std::chrono::steady_clock::now();
+                dream::render::BlendStats st;
+                const bool blended = dream::render::blend_frames(prev_frame, frame, interp_opts,
+                                                                 interp_pairs, interp_frame, st);
+                interp_ms += std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - t0)
+                                 .count();
+                interp_vertices += st.match.vertices_b;
+                interp_matched += st.match.matched_vertices;
+                interp_jumped += st.jumped_strips;
+                if (!blended) {
+                    ++interp_cuts;
+                } else if (interp_off.render(renderer, interp_frame, geometry)) {
+                    interp_ready = true;
+                    ++interp_rendered;
+                }
+            }
+            prev_frame = frame;
+            have_prev = true;
+        }
         if (!offscreen.render(renderer, frame, geometry)) {
             if (!reported_error) {
                 reported_error = true;
@@ -277,6 +312,44 @@ struct Live {
         if (!have_frame)
             return true;  // nothing displayable yet: the window keeps its cleared background
 
+        // The in-between frame goes first, before the real frame's swapchain image is acquired
+        // (acquiring twice would wait on a fence the first acquire just reset).
+        if (interpolate && interp_ready && from_renderer && !offscreen.readback && !show_fps &&
+            !menu.is_open()) {
+            interp_ready = false;
+            std::uint32_t iimage = 0;
+            VkCommandBuffer icmd = VK_NULL_HANDLE;
+            if (window.begin_frame(iimage, icmd)) {
+                VkClearValue iclear[2]{};
+                iclear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+                iclear[1].depthStencil = {0.0f, 0};
+                VkRenderPassBeginInfo ib{};
+                ib.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                ib.renderPass = window.render_pass();
+                ib.framebuffer = window.framebuffer(iimage);
+                ib.renderArea.extent = window.extent();
+                ib.clearValueCount = 2;
+                ib.pClearValues = iclear;
+                vkCmdBeginRenderPass(icmd, &ib, VK_SUBPASS_CONTENTS_INLINE);
+                const VkViewport iv{0.0f, 0.0f, static_cast<float>(window.extent().width),
+                                    static_cast<float>(window.extent().height), 0.0f, 1.0f};
+                const VkRect2D isc{{0, 0}, window.extent()};
+                vkCmdSetViewport(icmd, 0, 1, &iv);
+                vkCmdSetScissor(icmd, 0, 1, &isc);
+                presenter.draw_view(icmd, interp_off.sampled_view(), interp_off.width(),
+                                    interp_off.height(), window.extent());
+                vkCmdEndRenderPass(icmd);
+                if (!window.end_frame(iimage))
+                    window.recreate_swapchain();
+                ++interp_presented;
+                // Half a guest frame (59.94 Hz) before the real one.
+                if (pace_interpolation) {
+                    const auto due = last_present + std::chrono::microseconds(8342);
+                    if (due > std::chrono::steady_clock::now())
+                        std::this_thread::sleep_until(due);
+                }
+            }
+        }
         std::uint32_t image = 0;
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         if (!window.begin_frame(image, cmd)) {
@@ -333,6 +406,7 @@ struct Live {
         vkCmdEndRenderPass(cmd);
         if (!window.end_frame(image))
             window.recreate_swapchain();
+        last_present = std::chrono::steady_clock::now();
         ++presented;
         if (window.pressed(dream::render::vk::Control::ToggleFps)) {
             show_fps = !show_fps;
@@ -550,6 +624,24 @@ struct Live {
         char name[64];
         std::snprintf(name, sizeof name, "screenshot-%03u.ppm", screenshots++);
         screenshot_to(name);
+        // DREAM_SHOT_INTERP=1 (dreamcomp): also the interpolated frame drawn before this one.
+        if (interpolate && interp_rendered && std::getenv("DREAM_SHOT_INTERP")) {
+            if (const std::uint32_t* src = interp_off.pixels()) {
+                std::snprintf(name, sizeof name, "screenshot-%03u-interp.ppm", screenshots - 1);
+                if (FILE* f = std::fopen(name, "wb")) {
+                    std::fprintf(f, "P6\n%u %u\n255\n", interp_off.width(), interp_off.height());
+                    const std::size_t n =
+                        static_cast<std::size_t>(interp_off.width()) * interp_off.height();
+                    for (std::size_t i = 0; i < n; ++i) {
+                        const unsigned char rgb[3] = {static_cast<unsigned char>(src[i]),
+                                                      static_cast<unsigned char>(src[i] >> 8),
+                                                      static_cast<unsigned char>(src[i] >> 16)};
+                        std::fwrite(rgb, 1, 3, f);
+                    }
+                    std::fclose(f);
+                }
+            }
+        }
         std::printf("wrote %s: presented frame %llu, guest frame %llu\n", name,
                     static_cast<unsigned long long>(presented),
                     static_cast<unsigned long long>(guest_frame));
@@ -653,6 +745,17 @@ struct Live {
     dream::render::vk::Window window;
     dream::render::vk::Renderer renderer;
     dream::render::vk::Offscreen offscreen;
+    // Geometry interpolation (dreamcomp, docs/INTERPOLATION.md): --interpolate.
+    bool interpolate = false, pace_interpolation = true, have_prev = false, interp_ready = false;
+    bool interpolate_only_above_60 = false;
+    dream::render::vk::Offscreen interp_off;
+    dream::render::Frame prev_frame, interp_frame;
+    std::vector<dream::render::StripPair> interp_pairs;
+    dream::render::BlendOptions interp_opts;
+    std::uint64_t interp_rendered = 0, interp_presented = 0, interp_cuts = 0, interp_jumped = 0,
+                  interp_vertices = 0, interp_matched = 0;
+    double interp_ms = 0.0;
+    std::chrono::steady_clock::time_point last_present{};
     dream::render::vk::Presenter presenter;
     dream::render::DisplayList decoder;
     dream::render::vk::FrameGeometry geometry;
@@ -1089,6 +1192,9 @@ void usage(const char* argv0, std::FILE* out) {
         "  --scale N              draw at N times the guest's 640x480 (1 to 8, default 1)\n"
         "  --render-aspect A      render target shape for anamorphic widescreen (e.g. 1.7778)\n"
         "  --fullscreen           start fullscreen (Alt+Enter toggles)\n"
+        "  --interpolate          draw a blended frame between two game frames (needs a display\n"
+        "                         above 60 Hz to be seen; docs/INTERPOLATION.md in dreamcomp)\n"
+        "  --interpolate-auto     the same, only when the window's display is above 60 Hz\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
         "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
         "                         whole run to the panel, so --unthrottled with a window measures\n"
@@ -1222,6 +1328,8 @@ int main(int argc, char** argv) {
     std::vector<std::filesystem::path> mod_roots;
     int rumble_percent = 100;  // --rumble N (dreamcomp): pad rumble strength, 0 = off
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
+    bool interpolate_frames = false;      // --interpolate (dreamcomp): a blended frame between renders
+    bool interpolate_auto = false;        // --interpolate-auto: only on displays above 60 Hz
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1401,6 +1509,10 @@ int main(int argc, char** argv) {
             render_aspect = std::strtof(argv[++i], nullptr);
         else if (!std::strcmp(argv[i], "--fullscreen"))
             fullscreen = true;
+        else if (!std::strcmp(argv[i], "--interpolate"))
+            interpolate_frames = true;
+        else if (!std::strcmp(argv[i], "--interpolate-auto"))
+            interpolate_auto = true;
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc)
             scale = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) {
@@ -1772,6 +1884,9 @@ int main(int argc, char** argv) {
     if (window_mode) {
         live = std::make_unique<Live>(sys.memory, pvr);
         live->writeback = writeback;
+        live->interpolate = interpolate_frames || interpolate_auto;
+        live->interpolate_only_above_60 = interpolate_auto && !interpolate_frames;
+        live->pace_interpolation = !unthrottled;
         // The host copy of every frame is only needed for write-back; everything else reads it on
         // demand. DREAM_NO_DIRECT_PRESENT=1 restores the copy for A/B measurements.
         {
@@ -2284,6 +2399,19 @@ int main(int argc, char** argv) {
                 "%.1f ms loading), %u dumped (%.1f ms writing)\n",
                 static_cast<unsigned long long>(r.hashed), r.hash_ms, r.replaced,
                 r.replace_failed, r.load_ms, r.dumped, r.dump_ms);
+        if (live->interpolate)
+            std::printf(
+                "interpolation: %llu blended frames drawn, %llu presented, %llu camera cuts; "
+                "%.1f%% of vertices paired, %llu strips not blended (implausible jump); "
+                "%.2f ms per blend\n",
+                static_cast<unsigned long long>(live->interp_rendered),
+                static_cast<unsigned long long>(live->interp_presented),
+                static_cast<unsigned long long>(live->interp_cuts),
+                live->interp_vertices ? 100.0 * static_cast<double>(live->interp_matched) /
+                                            static_cast<double>(live->interp_vertices)
+                                      : 0.0,
+                static_cast<unsigned long long>(live->interp_jumped),
+                live->interp_rendered ? live->interp_ms / static_cast<double>(live->rendered) : 0.0);
         if (live->have_frame)
             std::printf("window: last shown %s\n", live->shown.describe().c_str());
         // Vulkan objects are destroyed now rather than at scope exit, while everything they were

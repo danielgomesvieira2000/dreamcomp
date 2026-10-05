@@ -83,6 +83,8 @@ public:
     // Borderless fullscreen on the window's display (dreamcomp). Alt+Enter toggles it in poll().
     void set_fullscreen(bool on) noexcept;
     bool fullscreen() const noexcept { return fullscreen_; }
+    // Refresh rate of the display the window is on, in Hz; 0 when unknown (dreamcomp).
+    float refresh_rate() const noexcept;
 
     // Held down as of the last poll().
     bool held(Control c) const noexcept;
