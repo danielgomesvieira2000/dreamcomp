@@ -1,0 +1,71 @@
+# Game data, BIOS, and SDK material are never committed (see docs/decisions ADR 1 and README).
+games/*/disc/
+games/*/dump/
+games/*/extracted/
+games/*/cache/
+# `--suggest-config` and `dcdisc new-game` write this next to the real config; it is a run's
+# output, not something anyone edits, and committing it invites editing the wrong file.
+games/*/suggested.toml
+*.gdi
+*.cdi
+*.chd
+!tools/dcdisc/tests/fixtures/*.chd
+*.iso
+*.bin
+*.BIN
+!tests/**/*.bin
+!tools/dcdisc/tests/fixtures/*
+*.fidb
+*.map
+*.MAP
+sdk/
+katana/
+dc_bios*
+dc_boot*
+dc_flash*
+# Console ROM dumps live here. Ignored as a directory, not just by filename, so a dump that does
+# not match the patterns above still cannot be committed. Your own console's ROM is yours to
+# dump; it is not ours to distribute.
+/bios/
+*.vmu
+*.vms
+*.vmi
+
+bios/
+
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+# Toolchain and editor
+.vscode/
+.idea/
+*.swp
+__pycache__/
+*.pyc
+.venv/
+
+# macOS and Python packaging clutter
+.DS_Store
+*.egg-info/
+
+# Owner-supplied third-party trees dropped into the checkout (never committed)
+/Dreamcast Katana SDK*/
+/flycast/
+# KallistiOS, cloned as a reference for how the hardware is actually driven. BSD-licensed, so it
+# is the safe thing to read and describe -- unlike the Katana SDK, which must never be quoted.
+/kallistios/
+
+# KOS test program build products
+tests/kos/**/*.elf
+tests/kos/**/*.o
+tests/kos/**/*.bin
+tests/sh4/cprogs/*.elf
+
+# Regression captures (tools/regress/gate.py): keyed to one disc and one build, so they mean
+# nothing on another machine.
+.regress/
