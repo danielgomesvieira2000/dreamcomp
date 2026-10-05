@@ -89,6 +89,10 @@ std::vector<Choice> aspect_choices(bool widescreen, float max_aspect) {
     return out;
 }
 
+std::vector<Choice> fps_choices() {
+    return {{"auto", "Auto"}, {"120", "120"}, {"60", "60  (original)"}};
+}
+
 std::vector<Choice> fit_choices() {
     return {{"crop", "Crop  (no bars)"}, {"letterbox", "Letterbox"}, {"stretch", "Stretch"}};
 }

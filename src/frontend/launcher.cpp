@@ -531,6 +531,10 @@ public:
                        "Crop fills the screen without bars; Letterbox shows the whole picture",
                        fits[choice_index(fits, draft_.get("fit", "crop"))].label);
         s += "<div class=\"section spaced\">Display</div>";
+        const auto fps = fps_choices();
+        s += row_cycle("fps", "Frame rate",
+                       "Auto blends in-between frames on 120 Hz+ displays; the game still runs at 60",
+                       fps[choice_index(fps, draft_.get("fps", "auto"))].label);
         s += row_toggle("fullscreen", "Fullscreen", "Alt+Enter also switches while playing",
                         draft_.get_bool("fullscreen", false));
         return s;
@@ -739,6 +743,8 @@ public:
                                        draft_.get("aspect", "16:9"), step));
         } else if (key == "fit") {
             draft_.set("fit", cycle(fit_choices(), draft_.get("fit", "crop"), step));
+        } else if (key == "fps") {
+            draft_.set("fps", cycle(fps_choices(), draft_.get("fps", "auto"), step));
         } else if (key == "rumble") {
             const int v = std::clamp(draft_.get_int("rumble", 100) + step * 10, 0, 100);
             draft_.set("rumble", std::to_string(v));
