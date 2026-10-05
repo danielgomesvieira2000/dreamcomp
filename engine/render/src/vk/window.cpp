@@ -385,12 +385,13 @@ bool Window::poll() {
                 // Hot-plug: rebuild the list and drop every held state. A pad yanked mid-race must
                 // release the accelerator rather than leave it held at its last value.
                 refresh_devices();
-                for (unsigned i = 0; i < kPadControlCount; ++i) {
-                    pad_held_[i] = false;
-                    pad_pressed_[i] = false;
-                    pad_value_[i] = 0.0f;
-                    ramp_[i] = 0.0f;
-                }
+                for (unsigned p = 0; p < kMaxPlayers; ++p)
+                    for (unsigned i = 0; i < kPadControlCount; ++i) {
+                        pad_held_[p][i] = false;
+                        pad_pressed_[p][i] = false;
+                        pad_value_[p][i] = 0.0f;
+                        ramp_[p][i] = 0.0f;
+                    }
                 break;
             case SDL_EVENT_KEY_DOWN:
                 if (capturing_ && !captured_this_poll) {
@@ -461,6 +462,9 @@ bool Window::poll() {
     dt = std::clamp(dt, 0.0f, 0.25f);  // a long stall must not jump the ramp to full
 
     const float dead = static_cast<float>(bindings_.deadzone_percent) / 100.0f;
+    for (unsigned p = 0; p < kMaxPlayers; ++p) {
+    // Keyboard drives player 0; pad N drives player N (connection order).
+    SDL_Gamepad* const player_pad = p < pads_.size() ? pads_[p] : nullptr;
     for (unsigned i = 0; i < kPadControlCount; ++i) {
         // Digital and analogue sources are gathered separately, because only a digital one ramps.
         // A pad's real trigger position must pass straight through, or a pad would feel worse than
@@ -469,11 +473,9 @@ bool Window::poll() {
         float analogue = 0.0f;
         // While capturing, the game gets nothing: a key held down to bind it must not also drive.
         if (!capturing_) {
-            if (keys && key_[i].source == BindSource::Key && keys[key_[i].code])
+            if (p == 0 && keys && key_[i].source == BindSource::Key && keys[key_[i].code])
                 digital_on = true;
-            for (SDL_Gamepad* g : pads_) {
-                if (!g)
-                    continue;
+            if (SDL_Gamepad* g = player_pad) {
                 if (gpad_[i].source == BindSource::Button) {
                     if (SDL_GetGamepadButton(g, static_cast<SDL_GamepadButton>(gpad_[i].code)))
                         digital_on = true;
@@ -499,32 +501,49 @@ bool Window::poll() {
         float value = analogue;
         if (is_trigger && bindings_.trigger_ramp) {
             constexpr float kRampSeconds = 0.15f;
-            ramp_[i] = digital_on ? std::min(1.0f, ramp_[i] + dt / kRampSeconds) : 0.0f;
-            value = std::max(value, ramp_[i]);
+            ramp_[p][i] = digital_on ? std::min(1.0f, ramp_[p][i] + dt / kRampSeconds) : 0.0f;
+            value = std::max(value, ramp_[p][i]);
         } else {
-            ramp_[i] = 0.0f;
+            ramp_[p][i] = 0.0f;
             if (digital_on)
                 value = 1.0f;
         }
 
-        const bool was = pad_held_[i];
-        pad_held_[i] = value > 0.0f;
-        pad_pressed_[i] = pad_held_[i] && !was;
-        pad_value_[i] = value;
+        const bool was = pad_held_[p][i];
+        pad_held_[p][i] = value > 0.0f;
+        pad_pressed_[p][i] = pad_held_[p][i] && !was;
+        pad_value_[p][i] = value;
+    }
     }
     return running_;
 }
 
 bool Window::pad_held(PadControl c) const noexcept {
-    return pad_held_[static_cast<unsigned>(c)];
+    return pad_held_[0][static_cast<unsigned>(c)];
 }
 
 bool Window::pad_pressed(PadControl c) const noexcept {
-    return pad_pressed_[static_cast<unsigned>(c)];
+    return pad_pressed_[0][static_cast<unsigned>(c)];
 }
 
 float Window::pad_value(PadControl c) const noexcept {
-    return pad_value_[static_cast<unsigned>(c)];
+    return pad_value_[0][static_cast<unsigned>(c)];
+}
+
+bool Window::pad_held(unsigned player, PadControl c) const noexcept {
+    return player < kMaxPlayers && pad_held_[player][static_cast<unsigned>(c)];
+}
+
+float Window::pad_value(unsigned player, PadControl c) const noexcept {
+    return player < kMaxPlayers ? pad_value_[player][static_cast<unsigned>(c)] : 0.0f;
+}
+
+void Window::rumble(unsigned player, float strength, unsigned ms) noexcept {
+    if (player >= pads_.size() || !pads_[player])
+        return;
+    const float s = std::clamp(strength * rumble_scale, 0.0f, 1.0f);
+    const auto level = static_cast<Uint16>(s * 65535.0f);
+    SDL_RumbleGamepad(pads_[player], level, level, s > 0.0f ? ms : 0u);
 }
 
 bool Window::held(Control c) const noexcept {

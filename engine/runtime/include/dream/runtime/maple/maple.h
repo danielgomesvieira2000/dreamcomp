@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -113,6 +114,23 @@ public:
     Reply handle(std::uint8_t command, const std::uint32_t* args, std::size_t nwords,
                  Payload& out) override;
     std::uint64_t condition_reads = 0;
+};
+
+// The vibration pack ("Puru Puru"), in a controller's expansion slot (dreamcomp addition). The game
+// sets a vibration condition; the pack reports it to the host through `on_vibrate` as a strength
+// 0..1 and a duration, which a window maps onto its gamepad's rumble. Protocol as documented by
+// Flycast's implementation: the condition word carries CNT (bit 0), positive/negative power (bits
+// 8-10 / 12-14), EXH/INH (bits 11 / 15), frequency (bits 16-23) and inclination (bits 24-31); a
+// block write sets the auto-stop time in 250 ms steps.
+class VibrationPack final : public Device {
+public:
+    std::function<void(float strength, unsigned duration_ms)> on_vibrate;
+    std::uint32_t functions() const noexcept override { return kVibration; }
+    Reply handle(std::uint8_t command, const std::uint32_t* args, std::size_t nwords,
+                 Payload& out) override;
+    std::uint32_t condition = 0;
+    unsigned auto_stop_ms = 5000;
+    std::uint64_t vibrations = 0;
 };
 
 // A visual memory unit, as far as a game is concerned: 128 KB of flash in 256 blocks of 512

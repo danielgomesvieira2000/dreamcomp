@@ -2,6 +2,7 @@
 // renderer, and the probe draws a triangle to prove the stack works on this machine.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -100,6 +101,19 @@ public:
     void set_bindings(const Bindings& b);
     const Bindings& bindings() const noexcept { return bindings_; }
 
+    // Players (dreamcomp): player 0 is the keyboard plus the first pad; pad N drives player N,
+    // in connection order. The one-argument forms are player 0.
+    static constexpr unsigned kMaxPlayers = 4;
+    unsigned players() const noexcept {
+        return pads_.empty() ? 1u : static_cast<unsigned>(std::min<std::size_t>(pads_.size(), kMaxPlayers));
+    }
+    bool pad_held(unsigned player, PadControl c) const noexcept;
+    float pad_value(unsigned player, PadControl c) const noexcept;
+    // Rumble on the pad driving `player`, strength 0..1 scaled by rumble_scale, for `ms`
+    // milliseconds (0 stops). No-op without a pad or rumble motor.
+    void rumble(unsigned player, float strength, unsigned ms) noexcept;
+    float rumble_scale = 1.0f;
+
     bool pad_held(PadControl c) const noexcept;
     bool pad_pressed(PadControl c) const noexcept;
     // 0 to 1. A digital source reads 1 while held, except that a trigger with the ramp enabled
@@ -167,12 +181,12 @@ private:
     Bindings bindings_;
     Resolved key_[kPadControlCount]{};
     Resolved gpad_[kPadControlCount]{};
-    bool pad_held_[kPadControlCount]{};
-    bool pad_pressed_[kPadControlCount]{};
-    float pad_value_[kPadControlCount]{};
+    bool pad_held_[kMaxPlayers][kPadControlCount]{};
+    bool pad_pressed_[kMaxPlayers][kPadControlCount]{};
+    float pad_value_[kMaxPlayers][kPadControlCount]{};
     // How long each trigger has been held, for the ramp. In poll ticks rather than seconds, scaled
     // by the measured frame interval, so a fast host does not ramp faster than a slow one.
-    float ramp_[kPadControlCount]{};
+    float ramp_[kMaxPlayers][kPadControlCount]{};
     std::uint64_t last_poll_ns_ = 0;
 
     std::vector<SDL_Gamepad*> pads_;

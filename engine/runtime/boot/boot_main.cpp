@@ -8,6 +8,8 @@
 // Exit code 0 when the run reached the requested stop (the first TA FIFO write with --stop-on-ta,
 // otherwise the frame or time limit), 1 on a fault, 2 on a setup error.
 #include <algorithm>
+#include <array>
+#include <functional>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -330,34 +332,36 @@ struct Live {
     // the keyboard are both live and either can be rebound. The stick and the triggers are read as
     // values rather than as flags: a real pad's travel reaches the guest, and a keyboard still
     // produces the extremes it always did, because a digital source reads a full 1.0.
-    void read_controls(dream::maple::ControllerState& pad) const {
+    void read_controls(dream::maple::ControllerState& pad, unsigned player = 0) const {
         using dream::render::PadControl;
+        auto pad_held = [&](PadControl c) { return window.pad_held(player, c); };
+        auto pad_value = [&](PadControl c) { return window.pad_value(player, c); };
         std::uint16_t held = 0;
-        if (window.pad_held(PadControl::Up))
+        if (pad_held(PadControl::Up))
             held |= dream::maple::kUp;
-        if (window.pad_held(PadControl::Down))
+        if (pad_held(PadControl::Down))
             held |= dream::maple::kDown;
-        if (window.pad_held(PadControl::Left))
+        if (pad_held(PadControl::Left))
             held |= dream::maple::kLeft;
-        if (window.pad_held(PadControl::Right))
+        if (pad_held(PadControl::Right))
             held |= dream::maple::kRight;
-        if (window.pad_held(PadControl::A))
+        if (pad_held(PadControl::A))
             held |= dream::maple::kA;
-        if (window.pad_held(PadControl::B))
+        if (pad_held(PadControl::B))
             held |= dream::maple::kB;
-        if (window.pad_held(PadControl::X))
+        if (pad_held(PadControl::X))
             held |= dream::maple::kX;
-        if (window.pad_held(PadControl::Y))
+        if (pad_held(PadControl::Y))
             held |= dream::maple::kY;
-        if (window.pad_held(PadControl::Start))
+        if (pad_held(PadControl::Start))
             held |= dream::maple::kStart;
         pad.buttons = static_cast<std::uint16_t>(0xFFFFu & ~held);
-        pad.joy_x = dream::maple::axis_byte(window.pad_value(PadControl::StickLeft),
-                                            window.pad_value(PadControl::StickRight));
-        pad.joy_y = dream::maple::axis_byte(window.pad_value(PadControl::StickUp),
-                                            window.pad_value(PadControl::StickDown));
-        pad.ltrigger = dream::maple::trigger_byte(window.pad_value(PadControl::LeftTrigger));
-        pad.rtrigger = dream::maple::trigger_byte(window.pad_value(PadControl::RightTrigger));
+        pad.joy_x = dream::maple::axis_byte(pad_value(PadControl::StickLeft),
+                                            pad_value(PadControl::StickRight));
+        pad.joy_y = dream::maple::axis_byte(pad_value(PadControl::StickUp),
+                                            pad_value(PadControl::StickDown));
+        pad.ltrigger = dream::maple::trigger_byte(pad_value(PadControl::LeftTrigger));
+        pad.rtrigger = dream::maple::trigger_byte(pad_value(PadControl::RightTrigger));
     }
 
     // --- the binding screen --------------------------------------------------------------------
@@ -1620,6 +1624,40 @@ int main(int argc, char** argv) {
         maple.attach_expansion(0, 0, std::move(card));
     }
     maple.attach(0, std::move(pad));
+    // dreamcomp: a vibration pack in every attached controller's slot 1, reported to the window
+    // as gamepad rumble for that player. `rumble_fn` stays empty headless.
+    std::function<void(unsigned, float, unsigned)> rumble_fn;
+    auto make_pack = [&rumble_fn](unsigned port) {
+        auto pack = std::make_unique<dream::maple::VibrationPack>();
+        pack->on_vibrate = [&rumble_fn, port](float strength, unsigned ms) {
+            if (rumble_fn)
+                rumble_fn(port, strength, ms);
+        };
+        return pack;
+    };
+    maple.attach_expansion(0, 1, make_pack(0));
+    // Players 2-4: a controller (and pack) on ports B-D exists only while a pad drives that
+    // player, so a game sees the second controller appear when it is plugged in.
+    std::array<dream::maple::Controller*, dream::maple::Bus::kPorts> port_pads{pad_ptr};
+    auto sync_ports = [&](unsigned players) {
+        for (unsigned port = 1; port < dream::maple::Bus::kPorts; ++port) {
+            const bool want = port < players;
+            if (want == (port_pads[port] != nullptr))
+                continue;
+            if (want) {
+                auto c = std::make_unique<dream::maple::Controller>();
+                port_pads[port] = c.get();
+                maple.attach(port, std::move(c));
+                maple.attach_expansion(port, 1, make_pack(port));
+            } else {
+                port_pads[port] = nullptr;
+                maple.attach(port, nullptr);
+                maple.attach_expansion(port, 1, nullptr);
+            }
+            std::printf("maple: controller %s on port %c\n", want ? "connected" : "removed",
+                        static_cast<char>('A' + port));
+        }
+    };
     sys.memory.map_mmio(dream::maple::Bus::kBase, dream::maple::Bus::kEnd, &maple);
     // Scripted controller presses (--press start@120,a@300): each is held for 8 frames.
     std::vector<std::pair<std::uint64_t, std::uint16_t>> scripted;
@@ -1705,6 +1743,9 @@ int main(int argc, char** argv) {
         live->bindings_path =
             bindings_file_set ? bindings_file : dream::render::vk::default_bindings_path();
         live->load_bindings();
+        rumble_fn = [&live](unsigned port, float strength, unsigned ms) {
+            live->window.rumble(port, strength, ms);
+        };
         std::printf("F1 (or a pad's select button) opens the controller bindings\n");
         auto previous_render = std::move(pvr.on_render);
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
@@ -1742,7 +1783,11 @@ int main(int argc, char** argv) {
             }
             // Scripted presses win while they are held, so --press still works with a window open.
             if (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu)
-                live->read_controls(pad_ptr->state);
+                live->read_controls(pad_ptr->state, 0);
+            sync_ports(live->window.players());
+            for (unsigned port = 1; port < port_pads.size(); ++port)
+                if (port_pads[port])
+                    live->read_controls(port_pads[port]->state, port);
             if (unthrottled)
                 return;
             const auto guest =

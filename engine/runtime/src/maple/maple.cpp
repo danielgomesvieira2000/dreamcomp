@@ -280,6 +280,84 @@ Reply Controller::handle(std::uint8_t command, const std::uint32_t* args, std::s
     }
 }
 
+// ---- VibrationPack (dreamcomp) -------------------------------------------------------------
+
+Reply VibrationPack::handle(std::uint8_t command, const std::uint32_t* args, std::size_t nwords,
+                            Payload& out) {
+    switch (command) {
+        case kDeviceRequest:
+        case kAllStatusReq: {
+            out.u32(kVibration);
+            out.u32(0x00000101u);  // one vibration source, settable frequency
+            out.u32(0);
+            out.u32(0);
+            out.u8(0xFF);
+            out.u8(0);
+            out.str("Puru Puru Pack", 30);
+            out.str("Produced By or Under License From SEGA ENTERPRISES,LTD.", 60);
+            out.u16(0x00C8);  // standby current, 20 mA
+            out.u16(0x0640);  // maximum current, 160 mA
+            if (command == kAllStatusReq) {
+                const char* extra =
+                    "Version 1.000,1998/11/10,315-6211-AH   ,Vibration Motor:1,Fm:4 - 30Hz,Pow:7     ";
+                for (const char* p = extra; *p; ++p) out.u8(static_cast<std::uint8_t>(*p));
+                while (out.bytes().size() % 4) out.u8(0);
+                return kDeviceStatusAll;
+            }
+            return kDeviceStatus;
+        }
+        case kGetCondition:
+            out.u32(kVibration);
+            out.u32(condition);
+            return kDataTransfer;
+        case kGetMediaInfo:
+            out.u32(kVibration);
+            out.u32(0x3B07E010u);  // vibration capabilities as a real pack reports them
+            return kDataTransfer;
+        case kBlockRead:
+            out.u32(kVibration);
+            out.u32(0);
+            out.u16(2);
+            out.u16(static_cast<std::uint16_t>((auto_stop_ms - 250) / 250));
+            return kDataTransfer;
+        case kBlockWrite:
+            // Auto-stop time, in 250 ms steps after the first 250 ms (third byte of the data).
+            if (nwords >= 3)
+                auto_stop_ms = ((args[2] >> 16) & 0xFFu) * 250u + 250u;
+            return kDeviceReply;
+        case kSetCondition: {
+            if (nwords < 2)
+                return kDeviceReply;
+            condition = args[1];
+            const unsigned pos = (condition >> 8) & 7u, neg = (condition >> 12) & 7u;
+            const unsigned freq = (condition >> 16) & 0xFFu;
+            int inc = static_cast<int>((condition >> 24) & 0xFFu);
+            if (condition & 0x8000u)
+                inc = -inc;  // INH: decaying
+            else if (!(condition & 0x0800u))
+                inc = 0;  // neither EXH nor INH: constant
+            const bool continuous = condition & 1u;
+            const float strength = std::min(1.0f, static_cast<float>(pos + neg) / 7.0f);
+            unsigned ms = auto_stop_ms;
+            if (freq > 0 && (!continuous || inc != 0)) {
+                const unsigned steps = inc ? static_cast<unsigned>(std::abs(inc)) * std::max(pos, neg) : 1u;
+                ms = std::min(1000u * steps / freq, auto_stop_ms);
+            }
+            ++vibrations;
+            if (on_vibrate)
+                on_vibrate(strength, strength > 0.0f ? ms : 0u);
+            return kDeviceReply;
+        }
+        case kDeviceReset:
+        case kDeviceKill:
+            if (on_vibrate)
+                on_vibrate(0.0f, 0u);
+            return kDeviceReply;
+        default:
+            return kUnknownCommand;
+    }
+}
+
 // ---- Bus -----------------------------------------------------------------------------------
 
 Bus::Bus(sched::Scheduler& sched, holly::Intc& holly, mem::DcMemory& memory)
