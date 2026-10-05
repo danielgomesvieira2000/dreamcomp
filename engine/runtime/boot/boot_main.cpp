@@ -9,6 +9,7 @@
 // otherwise the frame or time limit), 1 on a fault, 2 on a setup error.
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <chrono>
 #include <cstdio>
@@ -2366,6 +2367,7 @@ int main(int argc, char** argv) {
     sys.sched.profile = host_profile;
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
+    auto run_title = [&] {
     try {
 #ifdef DREAM_DEV_INTERPRETER
         if (interpret_all) {
@@ -2409,6 +2411,28 @@ int main(int argc, char** argv) {
                      static_cast<void*>(dream::sh4::hooks()), static_cast<void*>(&sys));
         rc = 1;
     }
+    };
+#ifdef DREAM_WITH_RENDERER
+    // dreamcomp: with a window, the guest runs on its own thread and this one only pumps window
+    // events, so moving or resizing the window (a modal loop on Windows) does not stop the game.
+    // DREAM_SINGLE_THREAD=1 keeps everything on one thread, as upstream does.
+    const bool single_thread = [] {
+        const char* e = std::getenv("DREAM_SINGLE_THREAD");
+        return e && *e && *e != '0';
+    }();
+    if (live && !single_thread) {
+        live->window.set_threaded(true);
+        std::atomic<bool> guest_done{false};
+        std::thread guest([&] {
+            run_title();
+            guest_done = true;
+        });
+        while (!guest_done.load()) live->window.pump_events(5);
+        guest.join();
+        live->window.set_threaded(false);
+    } else
+#endif
+        run_title();
     for (auto* e : dream::host::extensions()) e->on_stop(sys, stop);
     const double host_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

@@ -75,15 +75,18 @@ containers) in regions: launcher list; panel tab bar, rows, footer; dialog butto
 | Engine hooks | `host_ext.h` overlay methods + `HostControls`; `Window::event_filter`, `set_pad_menu_button`, `set_game_input_blocked`, `request_close`; `--volume` | generic; ledger rows in engine-changes.md |
 | Version | `dreamcomp_add_port` generates `<id>_port_version.cpp` from the port project's VERSION | shown bottom-left |
 
-**Threads.** The overlay's entry points share one mutex. `on_event` runs inside the engine
-window's event poll (`Window::poll`, called from `Live::present`); `draw` inside the present
-(`Live::present`, compositing into a host copy of the frame); `on_vblank` on the guest thread
-(test script only); Apply calls `HostControls` (window: rumble scale, fullscreen; audio: volume) and
-`present_options()`. Nothing else assumes the guest and the window share a thread.
+**Threads.** With a window, the main thread only pumps SDL events (`Window::pump_events`) and
+the title runs on its own thread, so moving or resizing the window (a modal loop on Windows) does
+not stop the game; `DREAM_SINGLE_THREAD=1` puts everything back on one thread. All overlay entry
+points run on the guest thread and share one mutex: `on_event` inside `Window::poll` (which drains
+the pumped events), `overlay_image` / `draw` inside `Live::present`, `on_vblank` (test script
+only). Apply calls `HostControls` (window: rumble scale, fullscreen -- forwarded to the main
+thread; audio: volume) and `present_options()`.
 
-**Cost while open** (Iris Xe, 1707×960 frame): composite ≈ 6 ms per frame, a UI re-render ≈ 11 ms
-on change; frames take the host-copy path instead of direct present. At scale 1 the game holds
-60 fps with the panel open; at scale 2 this GPU is below real time with or without the panel.
+**Cost while open** (Iris Xe): the panel is rendered at the window's size only when it changes
+and blended over the game on the GPU (a second `Presenter` layer), so frames keep the direct
+present path. Unthrottled at scale 2: 3.8x real time with the panel open for part of the run vs
+4.2x closed.
 
 ## Automated checks
 
@@ -108,8 +111,6 @@ Port art must be the port author's own work, never extracted from the disc (LEGA
 
 ## Not done
 
-- Window move/resize still stalls the game (guest and window share a thread; the coordinator is
-  moving the guest to its own thread).
 - Rebinding happens in the engine's own screen, not in the panel.
 - Gamepad navigation verified with synthetic SDL events only, not a physical pad; input blocking
   while the panel is open is verified by code path, not with a held physical key.

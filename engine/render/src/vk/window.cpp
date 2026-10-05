@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -38,6 +39,22 @@ constexpr SDL_GamepadButton kNavButtons[static_cast<unsigned>(Control::Count)] =
 };
 }  // namespace
 
+struct Window::EventQueue {
+    std::mutex mutex;
+    std::vector<SDL_Event> events;
+};
+
+void Window::pump_events(int timeout_ms) {
+    if (!queue_)
+        return;
+    SDL_Event ev;
+    if (!SDL_WaitEventTimeout(&ev, timeout_ms))
+        return;
+    std::lock_guard<std::mutex> lock(queue_->mutex);
+    queue_->events.push_back(ev);
+    while (SDL_PollEvent(&ev)) queue_->events.push_back(ev);
+}
+
 Window::~Window() {
     destroy();
 }
@@ -53,6 +70,7 @@ bool Window::create(const char* title, int width, int height, bool want_validati
         return false;
     }
     window_ = SDL_CreateWindow(title, width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    queue_ = std::make_shared<EventQueue>();
     if (!window_) {
         error_ = std::string("SDL_CreateWindow: ") + SDL_GetError();
         return false;
@@ -387,8 +405,17 @@ bool Window::poll() {
     // A capture consumes the physical input that ends it, so the key being bound does not also
     // reach the game on the same frame.
     bool captured_this_poll = false;
-    SDL_Event ev;
-    while (SDL_PollEvent(&ev)) {
+    std::vector<SDL_Event> batch;
+    if (threaded_) {
+        if (queue_) {
+            std::lock_guard<std::mutex> lock(queue_->mutex);
+            batch.swap(queue_->events);
+        }
+    } else {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) batch.push_back(ev);
+    }
+    for (const SDL_Event& ev : batch) {
         // dreamcomp: a host overlay sees each event first and may keep it.
         if (event_filter && ev.type != SDL_EVENT_QUIT &&
             ev.type != SDL_EVENT_WINDOW_CLOSE_REQUESTED && event_filter(&ev))
@@ -551,6 +578,22 @@ float Window::refresh_rate() const noexcept {
 void Window::set_fullscreen(bool on) noexcept {
     if (!window_)
         return;
+    if (threaded_ && !SDL_IsMainThread()) {
+        // Window state belongs to the thread that pumps its events; ask that one to do it.
+        struct Request {
+            SDL_Window* window;
+            bool on;
+        };
+        fullscreen_ = on;
+        SDL_RunOnMainThread(
+            [](void* p) {
+                auto* r = static_cast<Request*>(p);
+                SDL_SetWindowFullscreen(r->window, r->on);
+                delete r;
+            },
+            new Request{window_, on}, false);
+        return;
+    }
     if (SDL_SetWindowFullscreen(window_, on))
         fullscreen_ = on;
     // The swapchain follows on the next acquire (out of date) or present (suboptimal).

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,13 @@ public:
     // the game also acting on its input.
     void set_game_input_blocked(bool yes) noexcept { game_input_blocked_ = yes; }
     bool game_input_blocked() const noexcept { return game_input_blocked_; }
+    // Threaded mode (dreamcomp): the thread that created the window pumps SDL with
+    // pump_events() while another thread runs the guest and calls poll(), which then works
+    // through what was pumped instead of reading SDL itself. The OS's move and resize loops block
+    // only the pumping thread, so the game keeps running while the window is dragged.
+    void set_threaded(bool yes) noexcept { threaded_ = yes; }
+    // The pumping thread: waits up to `timeout_ms` for events and queues them for poll().
+    void pump_events(int timeout_ms);
     // Ends the run at the next poll(), as closing the window would.
     void request_close() noexcept { running_ = false; }
     // The window's size in pixels (0 x 0 before create()).
@@ -194,6 +202,9 @@ private:
     bool held_[static_cast<unsigned>(Control::Count)]{};
     bool pressed_[static_cast<unsigned>(Control::Count)]{};
     bool running_ = true;
+    bool threaded_ = false;
+    struct EventQueue;
+    std::shared_ptr<EventQueue> queue_;  // events pumped for poll() in threaded mode
     bool fullscreen_ = false;
     std::string error_;
 
