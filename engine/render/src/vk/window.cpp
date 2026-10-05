@@ -415,6 +415,9 @@ bool Window::poll() {
                     }
                 } else if (ev.key.key == SDLK_ESCAPE && escape_quits_) {
                     running_ = false;
+                } else if (ev.key.key == SDLK_RETURN && (ev.key.mod & SDL_KMOD_ALT) &&
+                           !ev.key.repeat) {
+                    set_fullscreen(!fullscreen_);
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -524,6 +527,14 @@ bool Window::poll() {
     }
     }
     return running_;
+}
+
+void Window::set_fullscreen(bool on) noexcept {
+    if (!window_)
+        return;
+    if (SDL_SetWindowFullscreen(window_, on))
+        fullscreen_ = on;
+    // The swapchain follows on the next acquire (out of date) or present (suboptimal).
 }
 
 bool Window::pad_held(PadControl c) const noexcept {

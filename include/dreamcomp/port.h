@@ -27,13 +27,15 @@ struct PortInfo {
     const char* id = nullptr;     // settings folder name, e.g. "soulcalibur"
     const char* title = nullptr;  // shown in the window title and menus
 
-    // Widescreen. Called every vblank on the guest thread with the current setting, so it can
-    // re-assert values the game recomputes and restore them when switched off. `anamorphic`
+    // Widescreen. Called every vblank on the guest thread with the target aspect ratio (4/3 means
+    // off: restore the original), so it can re-assert values the game recomputes. `anamorphic`
     // means the game still renders into its 640x480 framebuffer with a horizontally squeezed
-    // view, and the presenter stretches it back to `widescreen_aspect`.
-    void (*widescreen)(dream::System& sys, bool enabled) = nullptr;
-    float widescreen_aspect = 16.0f / 9.0f;
+    // view: the engine then draws into a render target of the target's shape (--render-aspect),
+    // which undoes the squeeze at full horizontal resolution. `max_aspect` caps what the port has
+    // been verified with.
+    void (*widescreen)(dream::System& sys, float aspect) = nullptr;
     bool widescreen_anamorphic = true;
+    float max_aspect = 32.0f / 9.0f;
 
     // Anything else the port wants each vblank (cheats, debug overlays...).
     void (*on_vblank)(dream::System& sys, Settings& settings) = nullptr;

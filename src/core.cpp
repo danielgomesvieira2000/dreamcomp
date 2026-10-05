@@ -27,6 +27,7 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #endif
 
@@ -84,6 +85,26 @@ void add_texture_flags(std::vector<std::string>& args, const std::filesystem::pa
     }
 }
 
+// "16:9" -> 1.7778. The setting `aspect` (default 16:9) applies to ports that implement
+// PortInfo::widescreen; others stay 4:3. The older `widescreen = false` key still means 4:3.
+float parse_aspect(const std::string& s) {
+    const auto colon = s.find(':');
+    if (colon == std::string::npos)
+        return 4.0f / 3.0f;
+    const float w = std::strtof(s.c_str(), nullptr);
+    const float h = std::strtof(s.c_str() + colon + 1, nullptr);
+    return (w > 0.0f && h > 0.0f) ? std::clamp(w / h, 4.0f / 3.0f, 4.0f) : 4.0f / 3.0f;
+}
+
+float target_aspect() {
+    if (!g_port || !g_port->widescreen)
+        return 4.0f / 3.0f;
+    if (g_settings.get("aspect").empty() && !g_settings.get("widescreen").empty() &&
+        !g_settings.get_bool("widescreen", true))
+        return 4.0f / 3.0f;
+    return std::min(parse_aspect(g_settings.get("aspect", "16:9")), g_port->max_aspect);
+}
+
 class Core final : public dream::host::Extension {
 public:
     const char* name() const override { return "dreamcomp"; }
@@ -107,10 +128,30 @@ public:
             const std::string& kv = args[i + 1];
             const auto eq = kv.find('=');
             const std::string key = kv.substr(0, eq);
-            if (eq != std::string::npos && (key == "texture_pack" || key == "dump_textures"))
+            if (eq != std::string::npos &&
+                (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
+                 key == "fullscreen" || key == "scale"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
+        // The aspect flags decide the render target's shape, which the engine needs before it
+        // parses anything: apply them now too (parse_arg consumes them later).
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--widescreen")
+                g_settings.set("aspect", "16:9");
+            else if (args[i] == "--no-widescreen")
+                g_settings.set("aspect", "4:3");
+            else if (args[i] == "--aspect" && i + 1 < args.size())
+                g_settings.set("aspect", args[i + 1]);
+        }
         add_texture_flags(args, g_settings.file().parent_path());
+        const float aspect = target_aspect();
+        if (aspect > 4.0f / 3.0f + 0.01f && g_port->widescreen_anamorphic &&
+            !has_flag(args, "--render-aspect")) {
+            args.push_back("--render-aspect");
+            args.push_back(std::to_string(aspect));
+        }
+        if (g_settings.get_bool("fullscreen", false) && !has_flag(args, "--fullscreen"))
+            args.push_back("--fullscreen");
 
         if (!has_flag(args, "--config")) {
             // A packaged port keeps its config next to the executable; a build tree one level up.
@@ -135,7 +176,7 @@ public:
             // Double-clicked: play, with the player's saved choices.
             args.push_back("--window");
             args.push_back("--scale");
-            args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", 2), 1, 4)));
+            args.push_back(std::to_string(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
             const std::string vmu = g_settings.get(
                 "vmu", (default_config_dir(id) / "vmu_a1.bin").string());
             args.push_back("--vmu");
@@ -146,14 +187,10 @@ public:
     int parse_arg(int i, int argc, char** argv) override {
         const char* a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[i + 1] : nullptr; };
-        if (!std::strcmp(a, "--widescreen")) {
-            g_settings.set_bool("widescreen", true);
-            return 1;
-        }
-        if (!std::strcmp(a, "--no-widescreen")) {
-            g_settings.set_bool("widescreen", false);
-            return 1;
-        }
+        if (!std::strcmp(a, "--widescreen") || !std::strcmp(a, "--no-widescreen"))
+            return 1;  // applied in adjust_args
+        if (!std::strcmp(a, "--aspect") && next())
+            return 2;  // applied in adjust_args
         if (!std::strcmp(a, "--fit") && next()) {
             g_settings.set("fit", next());
             return 2;
@@ -177,7 +214,9 @@ public:
     void usage(std::FILE* out) override {
         std::fprintf(out,
                      "\ndreamcomp:\n"
-                     "  --widescreen / --no-widescreen  override the saved widescreen setting\n"
+                     "  --aspect W:H           4:3 (original), 16:9, 21:9 or 32:9: a wider view, not\n"
+                     "                         a stretch (ports with widescreen support)\n"
+                     "  --widescreen / --no-widescreen  shorthand for --aspect 16:9 / 4:3\n"
                      "  --fit MODE             letterbox, crop or stretch (default crop: no bars)\n"
                      "  --set KEY=VALUE        override one setting for this run\n"
                      "  --save-settings        keep this run's overrides\n"
@@ -198,12 +237,12 @@ public:
             g_port->on_start(sys, g_settings);
         std::printf("dreamcomp: %s, settings %s%s\n", g_port && g_port->title ? g_port->title : "?",
                     g_settings.file().string().c_str(),
-                    widescreen() ? ", widescreen" : "");
+                    widescreen() ? (", aspect " + g_settings.get("aspect", "16:9")).c_str() : "");
     }
 
     void on_vblank(dream::System& sys) override {
         if (g_port && g_port->widescreen)
-            g_port->widescreen(sys, widescreen());
+            g_port->widescreen(sys, widescreen() ? target_aspect() : 4.0f / 3.0f);
         if (g_port && g_port->on_vblank)
             g_port->on_vblank(sys, g_settings);
     }
@@ -215,9 +254,7 @@ public:
     }
 
 private:
-    static bool widescreen() {
-        return g_port && g_port->widescreen && g_settings.get_bool("widescreen", false);
-    }
+    static bool widescreen() { return target_aspect() > 4.0f / 3.0f + 0.01f; }
 
     static void apply_presentation() {
 #ifdef DREAMCOMP_HAS_PRESENTER
@@ -226,8 +263,8 @@ private:
         o.fit = fit == "letterbox" ? dream::render::vk::PresentOptions::Fit::Letterbox
                 : fit == "stretch" ? dream::render::vk::PresentOptions::Fit::Stretch
                                    : dream::render::vk::PresentOptions::Fit::Crop;
-        o.display_aspect =
-            widescreen() && g_port->widescreen_anamorphic ? g_port->widescreen_aspect : 0.0f;
+        // The render target already has the target's shape (--render-aspect): show it as is.
+        o.display_aspect = 0.0f;
 #endif
     }
 

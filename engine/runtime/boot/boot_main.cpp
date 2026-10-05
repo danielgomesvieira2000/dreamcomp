@@ -130,12 +130,22 @@ struct Live {
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
     // geometry without lying to the guest about the size of its screen.
-    bool start(unsigned scale, bool validation, const std::string& title) {
-        const std::uint32_t w = kGuestWidth * scale, h = kGuestHeight * scale;
-        if (!window.create(title.c_str(), 960, 720, validation)) {
+    bool start(unsigned scale, bool validation, const std::string& title,
+               float render_aspect = 0.0f, bool fullscreen = false) {
+        // --render-aspect (dreamcomp): an anamorphic widescreen title still addresses a 640x480
+        // screen, but its view is squeezed horizontally; drawing it into a target that is wider
+        // by the same factor keeps the horizontal resolution of a native wide render.
+        const float wide = render_aspect > 0.0f ? render_aspect / (4.0f / 3.0f) : 1.0f;
+        const std::uint32_t w =
+            static_cast<std::uint32_t>(static_cast<float>(kGuestWidth * scale) * wide + 0.5f);
+        const std::uint32_t h = kGuestHeight * scale;
+        const std::uint32_t win_w = static_cast<std::uint32_t>(720.0f * (render_aspect > 0.0f ? render_aspect : 4.0f / 3.0f));
+        if (!window.create(title.c_str(), win_w, 720, validation)) {
             error = window.error();
             return false;
         }
+        if (fullscreen)
+            window.set_fullscreen(true);
         if (!offscreen.create(window.context(), w, h)) {
             error = offscreen.error();
             return false;
@@ -1074,7 +1084,9 @@ void usage(const char* argv0, std::FILE* out) {
         "\n"
         "Playing:\n"
         "  --window               open a window and play; implies sound\n"
-        "  --scale N              draw at N times the guest's 640x480 (1 to 4, default 1)\n"
+        "  --scale N              draw at N times the guest's 640x480 (1 to 8, default 1)\n"
+        "  --render-aspect A      render target shape for anamorphic widescreen (e.g. 1.7778)\n"
+        "  --fullscreen           start fullscreen (Alt+Enter toggles)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
         "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
         "                         whole run to the panel, so --unthrottled with a window measures\n"
@@ -1198,6 +1210,8 @@ int main(int argc, char** argv) {
                                       // settings out of the flash user partition may refuse to
                                       // start on a synthetic one.
     const char* disc_override = nullptr;  // --disc FILE (dreamcomp): the image, overriding [disc]
+    float render_aspect = 0.0f;           // --render-aspect A (dreamcomp): render target shape
+    bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1366,6 +1380,10 @@ int main(int argc, char** argv) {
             texture_pack = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-textures") && i + 1 < argc)
             dump_textures = argv[++i];
+        else if (!std::strcmp(argv[i], "--render-aspect") && i + 1 < argc)
+            render_aspect = std::strtof(argv[++i], nullptr);
+        else if (!std::strcmp(argv[i], "--fullscreen"))
+            fullscreen = true;
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc)
             scale = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) {
@@ -1389,8 +1407,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--config is required\n");
         return 2;
     }
-    if (scale < 1 || scale > 4) {
-        std::fprintf(stderr, "--scale must be 1 to 4\n");
+    if (scale < 1 || scale > 8) {
+        std::fprintf(stderr, "--scale must be 1 to 8\n");
         return 2;
     }
 #ifndef DREAM_WITH_RENDERER
@@ -1735,7 +1753,8 @@ int main(int argc, char** argv) {
         // down for a human, and a config without one still gets a window with a name on it.
         if (!live->start(
                 scale, validation,
-                cfg.title.empty() ? std::string("Dream Recomp") : cfg.title + " - Dream Recomp")) {
+                cfg.title.empty() ? std::string("Dream Recomp") : cfg.title + " - Dream Recomp",
+                render_aspect, fullscreen)) {
             std::fprintf(stderr, "window: %s\n", live->error.c_str());
             return 2;
         }

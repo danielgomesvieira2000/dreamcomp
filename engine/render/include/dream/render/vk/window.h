@@ -80,6 +80,9 @@ public:
     // True while the user has not closed the window; pumps the event queue and refreshes the
     // control state below.
     bool poll();
+    // Borderless fullscreen on the window's display (dreamcomp). Alt+Enter toggles it in poll().
+    void set_fullscreen(bool on) noexcept;
+    bool fullscreen() const noexcept { return fullscreen_; }
 
     // Held down as of the last poll().
     bool held(Control c) const noexcept;
@@ -170,6 +173,7 @@ private:
     bool held_[static_cast<unsigned>(Control::Count)]{};
     bool pressed_[static_cast<unsigned>(Control::Count)]{};
     bool running_ = true;
+    bool fullscreen_ = false;
     std::string error_;
 
     // One binding resolved to the codes SDL actually compares against.

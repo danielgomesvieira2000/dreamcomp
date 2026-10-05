@@ -44,7 +44,7 @@ All callbacks run on the guest thread. The guest is single-threaded and determin
 ## Settings
 
 `Settings` (`include/dreamcomp/settings.h`) is a `key = value` file per port in the platform
-config directory. Keys in use: `disc`, `scale` (1-4), `vmu`, `widescreen`, `fit`
+config directory. Keys in use: `disc`, `scale` (1-8), `aspect` (`4:3`, `16:9` default, `21:9`, `32:9`), `fullscreen`, `vmu`, `fit`
 (`letterbox|crop|stretch`, default `crop`), `texture_pack` (directory or `off`), `dump_textures`
 (`docs/TEXTURE-PACKS.md`). Command-line flags override for one run and are only
 saved with `--save-settings`, so test runs never leave choices behind in the player's file.
