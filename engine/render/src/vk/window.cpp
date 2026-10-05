@@ -12,6 +12,7 @@ namespace dream::render::vk {
 
 namespace {
 constexpr std::uint32_t kFramesInFlight = 2;
+constexpr std::uint32_t kMaxSwapchainImages = 8;
 
 // The keyboard layout, in Control order. Scancodes rather than key codes, so the physical key is
 // the same wherever the layout puts the letter on it.
@@ -93,7 +94,15 @@ bool Window::create(const char* title, int width, int height, bool want_validati
 
     fences_.resize(kFramesInFlight);
     acquired_.resize(kFramesInFlight);
-    rendered_.resize(kFramesInFlight);
+    // "Rendered" semaphores are per swapchain image, not per frame in flight: the presentation
+    // engine releases one only when that image is presented again, so reusing it by frame index
+    // signalled a semaphore still pending (dreamcomp; VUID-vkQueueSubmit-pSignalSemaphores-00067).
+    rendered_.resize(kMaxSwapchainImages);
+    for (std::uint32_t i = 0; i < kMaxSwapchainImages; ++i) {
+        VkSemaphoreCreateInfo sci{};
+        sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        vkCreateSemaphore(ctx_.device(), &sci, nullptr, &rendered_[i]);
+    }
     for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
         VkFenceCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -102,7 +111,6 @@ bool Window::create(const char* title, int width, int height, bool want_validati
         VkSemaphoreCreateInfo sci{};
         sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         vkCreateSemaphore(ctx_.device(), &sci, nullptr, &acquired_[i]);
-        vkCreateSemaphore(ctx_.device(), &sci, nullptr, &rendered_[i]);
     }
     // Whatever is already plugged in, plus the default bindings, so a pad works on a first run
     // with no configuration file and no visit to any UI.
@@ -560,9 +568,12 @@ bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
     vkWaitForFences(ctx_.device(), 1, &fences_[frame_], VK_TRUE, UINT64_MAX);
     const VkResult r = vkAcquireNextImageKHR(ctx_.device(), swapchain_, UINT64_MAX,
                                              acquired_[frame_], VK_NULL_HANDLE, &image_index);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
+    // SUBOPTIMAL still acquired the image and will signal the semaphore: carry on with this frame
+    // (vkQueuePresentKHR reports it again and the swapchain is rebuilt then). Returning here left
+    // the semaphore signalled with nobody waiting, and its next use was a validation error.
+    if (r == VK_ERROR_OUT_OF_DATE_KHR)
         return false;
-    if (r != VK_SUCCESS) {
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         error_ = "vkAcquireNextImageKHR failed";
         return false;
     }
@@ -588,13 +599,13 @@ bool Window::end_frame(std::uint32_t image_index) {
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &rendered_[frame_];
+    si.pSignalSemaphores = &rendered_[image_index % kMaxSwapchainImages];
     vkQueueSubmit(ctx_.queue(), 1, &si, fences_[frame_]);
 
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &rendered_[frame_];
+    pi.pWaitSemaphores = &rendered_[image_index % kMaxSwapchainImages];
     pi.swapchainCount = 1;
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &image_index;

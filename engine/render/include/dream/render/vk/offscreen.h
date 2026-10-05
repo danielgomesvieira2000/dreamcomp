@@ -73,6 +73,13 @@ private:
     HostBuffer readback_;
     bool have_pixels_ = false;
     bool copy_to_host();
+    // Pipelining (dreamcomp): render() returns once the frame is submitted; the CPU waits for it
+    // only when it next needs the command buffer or the pixels.
+    bool pending_ = false;
+    bool host_frame_ = false;  // the last render already copied the frame to the host
+public:
+    // Blocks until the last submitted render has finished on the GPU. False on a device timeout.
+    bool wait();
     std::string error_;
 };
 

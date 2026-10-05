@@ -126,6 +126,8 @@ bool Offscreen::create(Context& ctx, std::uint32_t width, std::uint32_t height) 
 }
 
 void Offscreen::destroy() {
+    if (ctx_ && ctx_->device() && pending_)
+        wait();
     if (ctx_ && ctx_->device()) {
         VkDevice dev = ctx_->device();
         if (fence_)
@@ -151,6 +153,10 @@ void Offscreen::destroy() {
 
 bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeometry& geometry) {
     if (!ctx_ || !cmd_)
+        return false;
+    // The previous frame must be finished before its command buffer (and the renderer's per-frame
+    // buffers, rewritten in prepare) are reused.
+    if (!wait())
         return false;
     vkResetCommandBuffer(cmd_, 0);
     VkCommandBufferBeginInfo bi{};
@@ -203,12 +209,12 @@ bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeomet
         b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // the render pass's final layout
         b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = colour_.image();
         b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     }
     if (vkEndCommandBuffer(cmd_) != VK_SUCCESS) {
@@ -225,19 +231,29 @@ bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeomet
         error_ = "vkQueueSubmit failed";
         return false;
     }
+    pending_ = true;
+    // With readback on, callers read pixels() straight after: it waits there.
+    have_pixels_ = false;
+    host_frame_ = readback;
+    ++frames;
+    return true;
+}
+
+bool Offscreen::wait() {
+    if (!pending_)
+        return true;
+    pending_ = false;
     // One second is far longer than any frame takes; waiting for ever would turn a lost device
     // into a hung launcher with nothing on screen to say so.
     if (vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, 1'000'000'000ull) != VK_SUCCESS) {
         error_ = "the GPU did not finish the frame within a second";
         return false;
     }
-    have_pixels_ = readback;
-    ++frames;
     return true;
 }
 
 bool Offscreen::copy_to_host() {
-    if (!ctx_ || !cmd_ || frames == 0)
+    if (!ctx_ || !cmd_ || frames == 0 || !wait())
         return false;
     vkResetCommandBuffer(cmd_, 0);
     VkCommandBufferBeginInfo bi{};
@@ -279,7 +295,9 @@ bool Offscreen::copy_to_host() {
 }
 
 const std::uint32_t* Offscreen::pixels() noexcept {
-    if (!have_pixels_ && !readback && copy_to_host())
+    if (!have_pixels_ && host_frame_ && wait())
+        have_pixels_ = true;  // the render itself copied it; it only had to finish
+    if (!have_pixels_ && !host_frame_ && copy_to_host())
         have_pixels_ = true;
     if (!have_pixels_)
         return nullptr;

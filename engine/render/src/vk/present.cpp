@@ -194,6 +194,7 @@ void Presenter::destroy_image() {
 void Presenter::destroy() {
     if (ctx_ && ctx_->device()) {
         VkDevice dev = ctx_->device();
+        vkDeviceWaitIdle(dev);  // the last frames may still be sampling with this pipeline
         destroy_image();
         if (pipeline_)
             vkDestroyPipeline(dev, pipeline_, nullptr);
