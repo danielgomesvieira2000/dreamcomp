@@ -9,9 +9,9 @@ then re-check every row below (a row whose change upstream absorbed is moved to 
 
 | Date | Area | Change | Why | Upstream status |
 |---|---|---|---|---|
-| 2026-10-05 | `runtime/boot/boot_main.cpp` | `--present-mode` parsing guarded by `DREAM_WITH_RENDERER` | A headless build (`-DDREAM_RENDERER=OFF`) failed to compile: `PM`/`present_mode` exist only with the renderer | not offered yet |
-| 2026-10-05 | `runtime/src/gdrom/disc.cpp`, `tools/dcdisc/dcdisc/cue.py` | Redump `.cue` disc images (single/high-density `REM` markers, INDEX 01 as track start, INDEX 00 pregap skipped by file offset) in both the C++ runtime and `dcdisc` | Redump distributes Dreamcast dumps as cue/bin; users had to hand-write a `.gdi` | not offered yet |
-| 2026-10-05 | `runtime/src/gdrom/disc.cpp` | 64-bit file seek (`_fseeki64` / `fseeko`) in the GDI/CUE reader | `fseek` takes a 32-bit `long` on Windows; data tracks reach 1.2 GB | not offered yet |
+| 2026-10-05 | `engine/runtime/boot/boot_main.cpp` | `--present-mode` parsing guarded by `DREAM_WITH_RENDERER` | A headless build (`-DDREAM_RENDERER=OFF`) failed to compile: `PM`/`present_mode` exist only with the renderer | not offered yet |
+| 2026-10-05 | `engine/runtime/src/gdrom/disc.cpp`, `engine/runtime/include/dream/runtime/gdrom/disc.h`, `engine/tools/dcdisc/dcdisc/cue.py`, `engine/tools/dcdisc/dcdisc/image.py`, `engine/tools/dcdisc/dcdisc/cli.py`, `engine/tools/dcdisc/tests/test_cue.py` | Redump `.cue` disc images (single/high-density `REM` markers, INDEX 01 as track start, INDEX 00 pregap skipped by file offset) in both the C++ runtime and `dcdisc` | Redump distributes Dreamcast dumps as cue/bin; users had to hand-write a `.gdi` | not offered yet |
+| 2026-10-05 | `engine/runtime/src/gdrom/disc.cpp` | 64-bit file seek (`_fseeki64` / `fseeko`) in the GDI/CUE reader | `fseek` takes a 32-bit `long` on Windows; data tracks reach 1.2 GB | not offered yet |
 
 ## Pinned base
 
