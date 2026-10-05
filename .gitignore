@@ -1,0 +1,62 @@
+# ============================================================
+#  NO GAME DATA IN THIS REPOSITORY. EVER.
+#  Dreamcomp ships tooling and original code only. Every user
+#  supplies their own legally obtained disc image; extraction,
+#  recompilation and asset conversion happen on their machine.
+#  `python tools/audit.py assets` enforces this (pre-commit + CI).
+# ============================================================
+
+# Disc images and tracks
+/game files/
+*.cue
+*.gdi
+*.cdi
+*.chd
+*.iso
+*.bin
+*.raw
+*.img
+*.mds
+*.mdf
+*.nrg
+
+# Anything extracted or derived from a disc
+/work/
+extracted/
+*.BIN
+*.PVR
+*.AFS
+*.ADX
+*.DAT
+*.VMS
+*.VMI
+
+# Recompiler output (regenerated from the user's disc)
+generated/
+/ports/
+
+# Build trees
+/build*/
+/out/
+CMakeUserPresets.json
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.dll
+*.so
+*.dylib
+
+# Local tooling state
+__pycache__/
+*.pyc
+.venv/
+CLAUDE.local.md
+.claude/settings.local.json
+/dist/
+/shots/
+/traces/
+*.log
