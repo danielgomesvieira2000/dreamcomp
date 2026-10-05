@@ -51,10 +51,10 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
         error_ = "vkCreateDescriptorSetLayout failed for the presenter";
         return false;
     }
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 1;
+    dpci.maxSets = 2;  // the uploaded image, and an external one for draw_view
     dpci.poolSizeCount = 1;
     dpci.pPoolSizes = &size;
     if (vkCreateDescriptorPool(dev, &dpci, nullptr, &pool_) != VK_SUCCESS) {
@@ -66,7 +66,8 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
     dsai.descriptorPool = pool_;
     dsai.descriptorSetCount = 1;
     dsai.pSetLayouts = &set_layout_;
-    if (vkAllocateDescriptorSets(dev, &dsai, &set_) != VK_SUCCESS) {
+    if (vkAllocateDescriptorSets(dev, &dsai, &set_) != VK_SUCCESS ||
+        vkAllocateDescriptorSets(dev, &dsai, &ext_set_) != VK_SUCCESS) {
         error_ = "vkAllocateDescriptorSets failed for the presenter";
         return false;
     }
@@ -215,6 +216,8 @@ void Presenter::destroy() {
     sampler_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
     set_ = VK_NULL_HANDLE;
+    ext_set_ = VK_NULL_HANDLE;
+    ext_view_ = VK_NULL_HANDLE;
     set_layout_ = VK_NULL_HANDLE;
     staging_.destroy();
     ctx_ = nullptr;
@@ -339,7 +342,36 @@ bool Presenter::upload(
 }
 
 bool Presenter::draw(VkCommandBuffer cmd, VkExtent2D target) {
-    if (!uploaded_ || !pipeline_ || target.width == 0 || target.height == 0)
+    if (!uploaded_)
+        return false;
+    return draw_set(cmd, set_, width_, height_, target);
+}
+
+bool Presenter::draw_view(VkCommandBuffer cmd, VkImageView view, std::uint32_t width,
+                          std::uint32_t height, VkExtent2D target) {
+    if (!view || !ext_set_)
+        return false;
+    if (view != ext_view_) {
+        VkDescriptorImageInfo dii{};
+        dii.sampler = sampler_;
+        dii.imageView = view;
+        dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = ext_set_;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &dii;
+        vkUpdateDescriptorSets(ctx_->device(), 1, &write, 0, nullptr);
+        ext_view_ = view;
+    }
+    return draw_set(cmd, ext_set_, width, height, target);
+}
+
+bool Presenter::draw_set(VkCommandBuffer cmd, VkDescriptorSet set, std::uint32_t width_,
+                         std::uint32_t height_, VkExtent2D target) {
+    if (!pipeline_ || target.width == 0 || target.height == 0)
         return false;
     // Fit the guest's aspect ratio inside the window: shrink whichever axis has room to spare
     // (letterbox), grow the other one past the edges (crop), or neither (stretch).
@@ -382,7 +414,7 @@ bool Presenter::draw(VkCommandBuffer cmd, VkExtent2D target) {
         push.taps[1] = static_cast<float>(height_) / drawn_h;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set_, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof push, &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);

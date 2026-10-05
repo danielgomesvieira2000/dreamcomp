@@ -48,7 +48,15 @@ public:
 
     // The last rendered frame as RGBA8888, width() * height() pixels, row 0 at the top. Null
     // before the first successful render().
-    const std::uint32_t* pixels() const noexcept;
+    // The rendered frame on the host. With `readback` off (dreamcomp's direct present) the copy
+    // is made here, on the first call after a render, so anything that needs the pixels --
+    // screenshots, F11, overlays, framebuffer write-back -- still gets them, and a frame nobody
+    // asks for never leaves the GPU.
+    const std::uint32_t* pixels() noexcept;
+    // false: render() leaves the colour image ready to sample (sampled_view()) and skips the copy.
+    bool readback = true;
+    VkImageView sampled_view() const noexcept { return colour_.view(); }
+    bool has_frame() const noexcept { return frames > 0; }
 
     const std::string& error() const noexcept { return error_; }
     std::uint64_t frames = 0;
@@ -64,6 +72,7 @@ private:
     VkFence fence_ = VK_NULL_HANDLE;
     HostBuffer readback_;
     bool have_pixels_ = false;
+    bool copy_to_host();
     std::string error_;
 };
 

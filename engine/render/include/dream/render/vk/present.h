@@ -66,6 +66,10 @@ public:
     // Draws the uploaded image, fitted to `target`. Call inside the window's render pass. False
     // when nothing has been uploaded yet, which leaves the cleared background showing.
     bool draw(VkCommandBuffer cmd, VkExtent2D target);
+    // Draws an image that already lives on the GPU (the offscreen render target, in
+    // SHADER_READ_ONLY layout) instead of the uploaded one: no host round trip (dreamcomp).
+    bool draw_view(VkCommandBuffer cmd, VkImageView view, std::uint32_t width,
+                   std::uint32_t height, VkExtent2D target);
 
     // The sampler's own filter, which now only decides how a *magnified* image is stretched: the
     // guest's pixels shown as pixels, or blurred between them. Minification no longer goes through
@@ -77,6 +81,10 @@ public:
     const std::string& error() const noexcept { return error_; }
 
 private:
+    bool draw_set(VkCommandBuffer cmd, VkDescriptorSet set, std::uint32_t width,
+                  std::uint32_t height, VkExtent2D target);
+    VkDescriptorSet ext_set_ = VK_NULL_HANDLE;
+    VkImageView ext_view_ = VK_NULL_HANDLE;
     bool ensure_image(std::uint32_t width, std::uint32_t height);
     void destroy_image();
 

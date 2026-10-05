@@ -19,7 +19,8 @@ bool Offscreen::create(Context& ctx, std::uint32_t width, std::uint32_t height) 
     // TRANSFER_SRC as well as COLOR_ATTACHMENT: the frame is copied back to the host after it is
     // drawn, and on some drivers an image without that usage cannot be a copy source at all.
     if (!colour_.create(ctx, VK_FORMAT_R8G8B8A8_UNORM, extent_,
-                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                            VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_IMAGE_ASPECT_COLOR_BIT)) {
         error_ = "could not create the offscreen colour attachment";
         return false;
@@ -162,6 +163,12 @@ bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeomet
 
     renderer.prepare(cmd_, frame);  // texture uploads happen outside the render pass
 
+    // The presenter may still be sampling the previous frame from this image in a command buffer
+    // submitted earlier on the same queue: wait for those reads before drawing over it.
+    vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 0,
+                         nullptr);
+
     VkClearValue clears[2]{};
     clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clears[1].depthStencil = {0.0f, 0};  // the hardware's depth grows towards the viewer
@@ -184,11 +191,26 @@ bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeomet
 
     // The render pass left the colour image as a transfer source, so the copy needs no barrier of
     // its own; the subpass dependency above orders it.
-    VkBufferImageCopy copy{};
-    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {extent_.width, extent_.height, 1};
-    vkCmdCopyImageToBuffer(cmd_, colour_.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           readback_.handle(), 1, &copy);
+    if (readback) {
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {extent_.width, extent_.height, 1};
+        vkCmdCopyImageToBuffer(cmd_, colour_.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               readback_.handle(), 1, &copy);
+    } else {
+        // Direct present: hand the image to the fragment shader instead of copying it out.
+        VkImageMemoryBarrier b{};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = colour_.image();
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
     if (vkEndCommandBuffer(cmd_) != VK_SUCCESS) {
         error_ = "vkEndCommandBuffer failed";
         return false;
@@ -209,12 +231,56 @@ bool Offscreen::render(Renderer& renderer, const Frame& frame, const FrameGeomet
         error_ = "the GPU did not finish the frame within a second";
         return false;
     }
-    have_pixels_ = true;
+    have_pixels_ = readback;
     ++frames;
     return true;
 }
 
-const std::uint32_t* Offscreen::pixels() const noexcept {
+bool Offscreen::copy_to_host() {
+    if (!ctx_ || !cmd_ || frames == 0)
+        return false;
+    vkResetCommandBuffer(cmd_, 0);
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd_, &bi) != VK_SUCCESS)
+        return false;
+    VkImageMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = colour_.image();
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {extent_.width, extent_.height, 1};
+    vkCmdCopyImageToBuffer(cmd_, colour_.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           readback_.handle(), 1, &copy);
+    std::swap(b.oldLayout, b.newLayout);
+    b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    if (vkEndCommandBuffer(cmd_) != VK_SUCCESS)
+        return false;
+    vkResetFences(ctx_->device(), 1, &fence_);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd_;
+    if (vkQueueSubmit(ctx_->queue(), 1, &si, fence_) != VK_SUCCESS)
+        return false;
+    return vkWaitForFences(ctx_->device(), 1, &fence_, VK_TRUE, 1'000'000'000ull) == VK_SUCCESS;
+}
+
+const std::uint32_t* Offscreen::pixels() noexcept {
+    if (!have_pixels_ && !readback && copy_to_host())
+        have_pixels_ = true;
     if (!have_pixels_)
         return nullptr;
     return static_cast<const std::uint32_t*>(readback_.mapped());

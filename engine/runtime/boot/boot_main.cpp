@@ -271,12 +271,18 @@ struct Live {
             window.recreate_swapchain();
             return true;
         }
-        const std::uint32_t* source = from_renderer ? offscreen.pixels() : pixels.data();
+        // Direct present (dreamcomp): a rendered frame nothing needs on the host is sampled where it
+        // is, on the GPU. Overlays drawn on the CPU and framebuffer write-back still take the copy.
+        const bool direct = from_renderer && !offscreen.readback && !show_fps && !menu.is_open();
+        const std::uint32_t* source =
+            direct ? nullptr : (from_renderer ? offscreen.pixels() : pixels.data());
         // Composited into the frame as it is handed to the GPU, so it costs no extra copy of the
         // picture. Deliberately not into the buffers screenshot() and capture() read: F12 and F11
         // are meant to produce the game's own pixels, which is what makes one comparable with
         // another and usable as a reference image.
-        if (show_fps || menu.is_open())
+        if (direct) {
+            // nothing to upload
+        } else if (show_fps || menu.is_open())
             presenter.upload(cmd, source, shown.width, shown.height,
                              [this](std::uint32_t* px, std::uint32_t w, std::uint32_t h) {
                                  if (show_fps)
@@ -307,7 +313,11 @@ struct Live {
         const VkRect2D scissor{{0, 0}, window.extent()};
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
-        presenter.draw(cmd, window.extent());
+        if (direct)
+            presenter.draw_view(cmd, offscreen.sampled_view(), offscreen.width(), offscreen.height(),
+                                window.extent());
+        else
+            presenter.draw(cmd, window.extent());
         vkCmdEndRenderPass(cmd);
         if (!window.end_frame(image))
             window.recreate_swapchain();
@@ -1710,6 +1720,12 @@ int main(int argc, char** argv) {
     if (window_mode) {
         live = std::make_unique<Live>(sys.memory, pvr);
         live->writeback = writeback;
+        // The host copy of every frame is only needed for write-back; everything else reads it on
+        // demand. DREAM_NO_DIRECT_PRESENT=1 restores the copy for A/B measurements.
+        {
+            const char* e = std::getenv("DREAM_NO_DIRECT_PRESENT");
+            live->offscreen.readback = writeback || (e && *e && *e != '0');
+        }
         live->show_fps = start_with_fps;
         live->shot_presented = shot_presented;
         live->window.set_present_mode(present_mode);
