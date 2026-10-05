@@ -4,9 +4,17 @@
 
 Ports with anamorphic widescreen (`PortInfo::widescreen`) draw their 2D HUD in the guest's
 640x480 screen space, so the horizontal stretch that widens the 3D view also widens the HUD.
-With `PortInfo::hud.enabled`, the HUD is scaled back around the screen centre each frame: it keeps
-its original 4:3 layout and proportions, centred on the wide screen. Setting `hud_fix = false`
-(or `--set hud_fix=false`) turns it off for an A/B. The launch report prints how many primitives
+With `PortInfo::hud.enabled`, HUD primitives are un-stretched each frame so they keep their
+original proportions. Setting `hud_layout`:
+
+- `edges` (default): HUD sprites are grouped into elements -- pieces that touch, and glyphs of one
+  text line (same top/bottom within 4 px, word gaps up to 1.5x the text height) -- and each
+  element is un-stretched about the edge of the screen third its centre falls in: health bars and
+  names stay at the screen edges, the timer stays centred.
+- `center`: the whole HUD is scaled about the screen centre, i.e. the original 4:3 layout,
+  centred.
+
+`hud_fix = false` (or `--set hud_fix=false`) turns the correction off for an A/B. The launch report prints how many primitives
 were corrected.
 
 ## How a primitive is classified
@@ -38,8 +46,8 @@ threshold would misfire, but every particle was a singleton.
 
 ## Limits and next step
 
-- The HUD is centred as a 4:3 block; bars are not pushed to the screen edges. Edge anchoring needs
-  per-element grouping (a health bar is three sprites), which belongs in an in-game inspector
-  like Daniel's N64 ports (select an element, choose left/centre/right).
+- Edge grouping is a heuristic: in Soulcalibur the round clock is grouped apart from "STAGE 1"
+  and anchors to the centre. Exact per-element anchoring (and overrides) belongs in an in-game
+  inspector like Daniel's N64 ports (select an element, choose left/centre/right).
 - A 2D element drawn as polygons instead of sprites is not corrected (none seen in Soulcalibur
   fights).

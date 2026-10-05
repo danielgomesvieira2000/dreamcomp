@@ -378,6 +378,7 @@ public:
         // leave its choices behind in the player's file.
         launch_dirty_ = g_settings.dirty();
         hud_fix_ = g_settings.get_bool("hud_fix", true);
+        hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
         apply_presentation();
         if (g_port && g_port->on_start)
             g_port->on_start(sys, g_settings);
@@ -417,6 +418,8 @@ public:
                 if (flat_z(p, z))
                     ++depth_counts_[z];
             }
+        // Pass 2: the HUD primitives and their horizontal extents.
+        hud_items_.clear();
         for (auto& list : frame.lists) {
             for (const auto& p : list) {
                 float z;
@@ -424,19 +427,69 @@ public:
                     continue;
                 if (z < rule.overlay_z && depth_counts_[z] < rule.min_shared)
                     continue;
-                float x0 = 1e30f, x1 = -1e30f;
+                HudItem it{&p, 1e30f, -1e30f, 1e30f, -1e30f};
                 for (std::uint32_t i = 0; i < p.count; ++i) {
-                    x0 = std::min(x0, frame.vertices[p.first + i].x);
-                    x1 = std::max(x1, frame.vertices[p.first + i].x);
+                    const auto& v = frame.vertices[p.first + i];
+                    it.x0 = std::min(it.x0, v.x);
+                    it.x1 = std::max(it.x1, v.x);
+                    it.y0 = std::min(it.y0, v.y);
+                    it.y1 = std::max(it.y1, v.y);
                 }
-                if (x1 - x0 > rule.full_width)
+                if (it.x1 - it.x0 > rule.full_width)
                     continue;
-                for (std::uint32_t i = 0; i < p.count; ++i) {
-                    auto& v = frame.vertices[p.first + i];
-                    v.x = 320.0f + (v.x - 320.0f) * k;
-                }
-                ++hud_corrected_;
+                hud_items_.push_back(it);
             }
+        }
+        // Layout `center`: the whole HUD scaled about the screen centre (its original 4:3 layout).
+        // Layout `edges` (default): sprites that touch horizontally and overlap vertically form one
+        // element (a health bar is a cap, a bar and a cap); each element is un-stretched about the
+        // edge of the screen third its centre falls in, so bars stay at the screen edges.
+        const std::size_t n = hud_items_.size();
+        hud_group_.resize(n);
+        for (std::size_t i = 0; i < n; ++i) hud_group_[i] = i;
+        auto root = [&](std::size_t i) {
+            while (hud_group_[i] != i) i = hud_group_[i] = hud_group_[hud_group_[i]];
+            return i;
+        };
+        if (hud_edges_) {
+            // Touching pieces (gap <= 3 px, overlapping rows) are one element; so are pieces of
+            // one text line -- same top and bottom within 4 px -- across word gaps up to 1.5x
+            // their height, so "INSERT COIN" moves as one. A bar beside taller timer digits has a
+            // different extent and stays separate.
+            constexpr float kTouch = 3.0f, kSameRow = 4.0f;
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = i + 1; j < n; ++j) {
+                    const auto& a = hud_items_[i];
+                    const auto& b = hud_items_[j];
+                    const float gap = std::max(a.x0, b.x0) - std::min(a.x1, b.x1);
+                    const bool rows_overlap = a.y0 <= b.y1 && b.y0 <= a.y1;
+                    const bool same_line = std::abs(a.y0 - b.y0) <= kSameRow &&
+                                           std::abs(a.y1 - b.y1) <= kSameRow;
+                    const float line_gap = 1.5f * std::max(a.y1 - a.y0, b.y1 - b.y0);
+                    if ((rows_overlap && gap <= kTouch) || (same_line && gap <= line_gap))
+                        hud_group_[root(i)] = root(j);
+                }
+        }
+        group_x0_.assign(n, 1e30f);
+        group_x1_.assign(n, -1e30f);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t r = root(i);
+            group_x0_[r] = std::min(group_x0_[r], hud_items_[i].x0);
+            group_x1_[r] = std::max(group_x1_[r], hud_items_[i].x1);
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            float anchor = 320.0f;
+            if (hud_edges_) {
+                const std::size_t r = root(i);
+                const float cx = 0.5f * (group_x0_[r] + group_x1_[r]);
+                anchor = cx < 640.0f / 3.0f ? group_x0_[r] : cx > 1280.0f / 3.0f ? group_x1_[r] : 320.0f;
+            }
+            const auto& p = *hud_items_[i].poly;
+            for (std::uint32_t v = 0; v < p.count; ++v) {
+                auto& vx = frame.vertices[p.first + v];
+                vx.x = anchor + (vx.x - anchor) * k;
+            }
+            ++hud_corrected_;
         }
     }
 
@@ -465,7 +518,14 @@ private:
     }
 
     bool save_on_exit_ = false;
-    bool hud_fix_ = true;
+    bool hud_fix_ = true, hud_edges_ = true;
+    struct HudItem {
+        const dream::render::Polygon* poly;
+        float x0, x1, y0, y1;
+    };
+    std::vector<HudItem> hud_items_;
+    std::vector<std::size_t> hud_group_;
+    std::vector<float> group_x0_, group_x1_;
     std::unordered_map<float, unsigned> depth_counts_;
     std::uint64_t hud_corrected_ = 0;
     bool launch_dirty_ = false;
