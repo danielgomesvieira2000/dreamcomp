@@ -4,6 +4,8 @@
 #include "dream/runtime/aica/mixer.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace dream::aica {
@@ -144,6 +146,31 @@ u16 dsp_pack(s32 val) {
     uval |= static_cast<u32>(sign) << 15;
     uval |= static_cast<u32>(exponent) << 11;
     return static_cast<u16>(uval);
+}
+
+// DREAM_AICA_PROBE="FIRST,COUNT[,FILE]" (dreamcomp): for output samples FIRST.. (0-based, the
+// same index as the --wav file's frames), write every playing channel's contribution and the
+// DSP's to FILE (default aica_probe.txt). Finds which voice makes a click (tools/audio_check.py).
+struct Probe {
+    u64 first = 0, count = 0;
+    std::FILE* f = nullptr;
+    Probe() {
+        const char* e = std::getenv("DREAM_AICA_PROBE");
+        if (!e || !*e)
+            return;
+        char path[260] = "aica_probe.txt";
+        unsigned long long a = 0, b = 0;
+        if (std::sscanf(e, "%llu,%llu,%259s", &a, &b, path) >= 2) {
+            first = a;
+            count = b;
+            f = std::fopen(path, "w");
+        }
+    }
+    bool on(u64 sample) const noexcept { return f && sample >= first && sample < first + count; }
+};
+Probe& probe() {
+    static Probe p;
+    return p;
 }
 
 s32 dsp_unpack(u16 val) {
@@ -584,7 +611,19 @@ struct Mixer::Channel {
     }
     void step_mix(SampleType& mixl, SampleType& mixr) {
         SampleType oLeft, oRight, oDsp;
+        Probe& pr = probe();
+        const bool probing = pr.on(mixer->samples - 1);
+        const u32 ca0 = CA, fp0 = step.p.fp;
+        const SampleType s00 = s0, s10 = s1;
+        const int aeg0 = AEG.value(), st0 = static_cast<int>(AEG.state);
         step_channel(oLeft, oRight, oDsp);
+        if (probing)
+            std::fprintf(pr.f,
+                         "  ch%02d fmt%u lp%u CA %5u LSA %5u LEA %5u s0 %6d s1 %6d fp %4u aeg %3d/%d "
+                         "TL %3u flt%d L %6d R %6d dsp %7d\n",
+                         number, static_cast<unsigned>(ccd->PCMS), static_cast<unsigned>(ccd->LPCTL),
+                         ca0, loop.LSA, loop.LEA, s00, s10, fp0, aeg0, st0,
+                         static_cast<unsigned>(ccd->TL), FEG.active ? 1 : 0, oLeft, oRight, oDsp);
         *VolMix.DSPOut += oDsp;
         mixl += oLeft;
         mixr += oRight;
@@ -837,6 +876,12 @@ void Mixer::reset() {
 }
 
 void Mixer::channel_reg_written(unsigned channel, unsigned reg, unsigned size) {
+    if (probe().on(samples)) {
+        u16 v;
+        std::memcpy(&v, regs_ + (channel & 63) * 0x80 + (reg & 0x7E), 2);
+        std::fprintf(probe().f, "    write ch%02u +%02X size %u -> %04X (before sample %llu)\n",
+                     channel & 63, reg & 0x7F, size, v, static_cast<unsigned long long>(samples));
+    }
     chans_[channel & 63].reg_write(reg & 0x7F, size);
 }
 
@@ -1027,6 +1072,19 @@ void Mixer::dsp_step() {
 
 void Mixer::sample(std::int16_t& left, std::int16_t& right) {
     ++samples;
+    if (probe().on(samples - 1)) {
+        // Every byte of the channel registers that changed since the last probed sample: a change
+        // with no "write" line above it came from a path that bypasses channel_reg_written.
+        static u8 shadow[0x2000];
+        static bool have = false;
+        if (have)
+            for (u32 i = 0; i < 0x2000; ++i)
+                if (shadow[i] != regs_[i])
+                    std::fprintf(probe().f, "    changed ch%02u +%02X: %02X -> %02X\n", i >> 7,
+                                 i & 0x7F, shadow[i], regs_[i]);
+        std::memcpy(shadow, regs_, sizeof shadow);
+        have = true;
+    }
     SampleType mixl = 0, mixr = 0;
     std::memset(dsp_.MIXS, 0, sizeof dsp_.MIXS);
     // A disabled channel contributes exactly zero (step_channel's early-out); skipping it saves
@@ -1039,10 +1097,15 @@ void Mixer::sample(std::int16_t& left, std::int16_t& right) {
     // CDDA (EXTS) is not modelled: silence on both inputs.
     dsp->EXTS[0] = dsp->EXTS[1] = 0;
     dsp_step();
+    const SampleType dry_l = mixl, dry_r = mixr;
     if (!dsp_.stopped)
         for (int i = 0; i < 16; i++)
             volume_pan(static_cast<s16>(dsp->EFREG[i]), out_vol[i].EFSDL, out_vol[i].EFPAN, mixl,
                        mixr);
+    if (probe().on(samples - 1))
+        std::fprintf(probe().f, "sample %llu dry %d %d dsp %d %d\n",
+                     static_cast<unsigned long long>(samples - 1), dry_l, dry_r, mixl - dry_l,
+                     mixr - dry_r);
     const CommonRegs* common = reinterpret_cast<const CommonRegs*>(regs_ + 0x2800);
     if (common->Mono)
         mixl = mixr = (mixl + mixr) >> 1;

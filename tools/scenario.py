@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Repeatable scripted runs of a port, with everything an unattended session needs to judge them.
+
+    python tools/scenario.py fight                       # Soulcalibur, default port
+    python tools/scenario.py fight --set aspect=4:3 --set hud_fix=false --env DREAM_AICA_BATCH=1
+    python tools/scenario.py menus --out work/sc/menus-a --shots 600,1200
+    python tools/scenario.py list
+
+A scenario is a button script (--press) and a frame count. Each run gets a fresh scratch settings
+file, memory card and bindings file (the player's own are never touched), a fixed RTC seed, and
+writes into its output folder:
+
+    run.log / run.err   the launcher's report
+    audio.wav           the mixer output; audio.txt: tools/audio_check.py on it
+    shot_<frame>.png    screenshots at the listed presented frames, and sheet.png (contact sheet)
+    summary.json        speed, audio problems, render counters: compare two runs with --compare
+
+    python tools/scenario.py fight --compare work/sc/fight-a work/sc/fight-b
+
+The fight scenario mashes A through Arcade into Kilik vs Voldo (stage 1) and keeps fighting; at
+--speed real (default) it runs paced like play, --speed max unthrottled (audio drops then: judge
+the wav, not the device).
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def fight_press():
+    p = ["start@600", "start@900"]
+    p += [f"a@{f}" for f in range(1100, 20000, 120)]
+    return ",".join(p)
+
+
+SCENARIOS = {
+    # name: (frames, press, default shots, what it covers)
+    "boot": (900, "", "300,600,880", "boot logos, title screen"),
+    "menus": (2400, "start@600,start@900,a@1100,a@1300,start@1500,a@1700", "700,1000,1250,1450,1800,2300",
+              "title, main menu, mode select, character select"),
+    "fight": (4900, fight_press(), "1500,2500,3500,4500", "arcade: Kilik vs Voldo, stage 1"),
+    "fight-long": (12000, fight_press(), "2500,4500,6500,8500,10500,11800", "several arcade fights"),
+}
+
+
+def port_paths(port):
+    pdir = os.path.join(ROOT, "ports", f"{port}-recomp")
+    exe = os.path.join(pdir, "build", "game", f"{port}-recomp.exe")
+    if not os.path.exists(exe):
+        exe = exe[:-4]
+    return pdir, exe
+
+
+def find_disc(port):
+    games = os.path.join(ROOT, "game files")
+    for d in os.listdir(games) if os.path.isdir(games) else []:
+        if d.lower().replace(" ", "").startswith(port.lower()):
+            for f in os.listdir(os.path.join(games, d)):
+                if f.lower().endswith((".cue", ".gdi", ".chd")):
+                    return os.path.join(games, d, f)
+    return None
+
+
+def run_scenario(a):
+    frames, press, shots, _ = SCENARIOS[a.scenario]
+    frames = a.frames or frames
+    shots = a.shots if a.shots is not None else shots
+    pdir, exe = port_paths(a.port)
+    disc = a.disc or find_disc(a.port)
+    out = os.path.abspath(a.out or os.path.join(ROOT, "work", "sc", f"{a.scenario}-{time.strftime('%H%M%S')}"))
+    if os.path.isdir(out):
+        shutil.rmtree(out)
+    os.makedirs(out)
+    with open(os.path.join(out, "settings.ini"), "w") as f:
+        for kv in a.set:
+            k, v = kv.split("=", 1)
+            f.write(f"{k.strip()} = {v.strip()}\n")
+    args = [exe, "--window", "--disc", disc, "--settings", os.path.join(out, "settings.ini"),
+            "--vmu", os.path.join(out, "vmu.bin"), "--bindings", os.path.join(out, "bindings.txt"),
+            "--rtc-seed", "1000000", "--max-frames", str(frames), "--wav", os.path.join(out, "audio.wav")]
+    if a.speed == "max":
+        args += ["--unthrottled", "--present-mode", "immediate"]
+    if press:
+        args += ["--press", press]
+    if shots:
+        args += ["--screenshot-at", shots]
+    args += a.extra
+    env = dict(os.environ)
+    for kv in a.env:
+        k, v = kv.split("=", 1)
+        env[k] = v
+    t0 = time.time()
+    with open(os.path.join(out, "run.log"), "w") as lo, open(os.path.join(out, "run.err"), "w") as le:
+        rc = subprocess.call(args, cwd=out, stdout=lo, stderr=le, env=env)
+    wall = time.time() - t0
+    log = open(os.path.join(out, "run.log"), encoding="utf-8", errors="replace").read()
+    summary = {"scenario": a.scenario, "rc": rc, "wall_s": round(wall, 1), "set": a.set, "env": a.env}
+    m = re.search(r"host: ([\d.]+) s \(([\d.]+)x real time\)", log)
+    if m:
+        summary["host_s"], summary["speed_x"] = float(m.group(1)), float(m.group(2))
+    m = re.search(r"audio: (\d+) samples played in \d+ blocks, (\d+) dropped, (\d+) underruns", log)
+    if m:
+        summary["audio_dropped"], summary["audio_underruns"] = int(m.group(2)), int(m.group(3))
+    m = re.search(r"window: (\d+) frames drawn .*?(\d+) presented.*?textures (\d+) decoded, (\d+) failed", log)
+    if m:
+        summary["drawn"], summary["presented"] = int(m.group(1)), int(m.group(2))
+        summary["tex_decoded"], summary["tex_failed"] = int(m.group(3)), int(m.group(4))
+    for key, pat in (("fault", r"^fault: (.*)$"), ("stop", r"^stop: (.*)$")):
+        m = re.search(pat, log, re.M)
+        if m:
+            summary[key] = m.group(1)
+    # Audio.
+    wav = os.path.join(out, "audio.wav")
+    if os.path.exists(wav):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "audio_check.py"), wav, "--per-second",
+                            "--top", "5"], capture_output=True, text=True)
+        open(os.path.join(out, "audio.txt"), "w").write(r.stdout)
+        clicks = [int(x) for x in re.findall(r"(\d+) clicks", r.stdout)]
+        clips = [int(x) for x in re.findall(r"clipped (\d+) samples", r.stdout)]
+        summary["audio_clicks"] = sum(clicks)
+        summary["audio_clipped"] = sum(clips)
+    # Screenshots.
+    ppms = sorted(f for f in os.listdir(out) if f.startswith("screenshot-") and f.endswith(".ppm"))
+    want = [int(x) for x in shots.split(",")] if shots else []
+    pngs = []
+    try:
+        from PIL import Image, ImageDraw
+        for n, f in zip(want, ppms):
+            dst = os.path.join(out, f"shot_{n:05d}.png")
+            Image.open(os.path.join(out, f)).save(dst)
+            os.remove(os.path.join(out, f))
+            pngs.append((n, dst))
+        if pngs:
+            w, h = 427, 240
+            cols = min(3, len(pngs))
+            rows = (len(pngs) + cols - 1) // cols
+            sheet = Image.new("RGB", (cols * w, rows * h))
+            for i, (n, p) in enumerate(pngs):
+                cell = Image.open(p).convert("RGB").resize((w, h))
+                ImageDraw.Draw(cell).text((4, 4), f"f{n}", fill=(255, 255, 0))
+                sheet.paste(cell, ((i % cols) * w, (i // cols) * h))
+            sheet.save(os.path.join(out, "sheet.png"))
+    except ImportError:
+        pass
+    summary["shots"] = len(pngs)
+    json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=1)
+    print(json.dumps(summary))
+    print(f"output: {out}")
+    return 0 if rc == 0 else 1
+
+
+def compare(dirs):
+    rows = [json.load(open(os.path.join(d, "summary.json"))) for d in dirs]
+    keys = ["speed_x", "audio_clicks", "audio_clipped", "audio_dropped", "audio_underruns", "drawn",
+            "presented", "tex_decoded", "tex_failed", "stop", "fault"]
+    print("key".ljust(18) + "".join(os.path.basename(d.rstrip("/\\"))[:22].ljust(24) for d in dirs))
+    for k in keys:
+        print(k.ljust(18) + "".join(str(r.get(k, "-")).ljust(24) for r in rows))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("scenario", help="|".join(SCENARIOS) + "|list")
+    ap.add_argument("--port", default="soulcalibur")
+    ap.add_argument("--disc")
+    ap.add_argument("--out")
+    ap.add_argument("--frames", type=int)
+    ap.add_argument("--shots", help="presented frames to screenshot, comma separated ('' for none)")
+    ap.add_argument("--set", action="append", default=[], help="settings key=value (scratch file)")
+    ap.add_argument("--env", action="append", default=[], help="environment KEY=VALUE for the run")
+    ap.add_argument("--speed", choices=["real", "max"], default="max")
+    ap.add_argument("--compare", nargs="+", help="print summary.json of these output folders side by side")
+    ap.add_argument("extra", nargs="*", help="extra launcher flags after --")
+    a = ap.parse_args()
+    if a.compare:
+        return compare(a.compare)
+    if a.scenario == "list":
+        for k, (frames, _, shots, what) in SCENARIOS.items():
+            print(f"{k:11} {frames:6} frames  {what}")
+        return 0
+    if a.scenario not in SCENARIOS:
+        sys.exit(f"unknown scenario {a.scenario}")
+    return run_scenario(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

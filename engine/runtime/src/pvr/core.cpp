@@ -1,5 +1,10 @@
 #include "dream/runtime/pvr/core.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
 #include <cstring>
 
 namespace dream::pvr {
@@ -167,6 +172,22 @@ void Core::reset() {
     regs_[kId >> 2] = 0x17FD11DBu;
     regs_[kRevision >> 2] = 0x00000011u;
     regs_[kSoftReset >> 2] = 0x00000007u;
+    // Power-on values of the other registers (dreamcomp; Flycast's pvr_regs.cpp Regs_Reset; the
+    // SPG ones are Spg's). PT_ALPHA_REF matters: a title that never writes it relies on 0xFF, so
+    // punch-through texels with alpha below 1 are dropped. Left at 0, Soulcalibur's HUD digits
+    // drew their transparent background as black boxes.
+    regs_[0x07C >> 2] = 0x0007DF77u;  // FPU_PARAM_CFG
+    regs_[0x080 >> 2] = 0x00000007u;  // HALF_OFFSET
+    regs_[0x098 >> 2] = 0x00402000u;  // ISP_FEED_CFG
+    regs_[0x0A0 >> 2] = 0x00000020u;  // SDRAM_REFRESH
+    regs_[0x0A4 >> 2] = 0x0000001Fu;  // SDRAM_ARB_CFG
+    regs_[0x0A8 >> 2] = 0x15F28997u;  // SDRAM_CFG
+    regs_[0x0E8 >> 2] = 0x00000108u;  // VO_CONTROL
+    regs_[0x0EC >> 2] = 0x0000009Du;  // VO_STARTX
+    regs_[0x0F0 >> 2] = 0x00150015u;  // VO_STARTY
+    regs_[0x0F4 >> 2] = 0x00000400u;  // SCALER_CTL
+    regs_[0x110 >> 2] = 0x00090639u;  // FB_BURSTCTRL
+    regs_[0x11C >> 2] = 0x000000FFu;  // PT_ALPHA_REF
     ta.reset();
     fifo_fill_ = 0;
     seen_ta_data_ = false;
@@ -289,6 +310,28 @@ void Core::write(std::uint32_t addr, std::uint32_t value, unsigned size) {
     if (addr < kRegBase || addr >= kRegEnd)
         return;
     const std::uint32_t off = addr - kRegBase;
+    {
+        // DREAM_PVR_WATCH=11C,108 (dreamcomp): log writes to these register offsets (hex, from
+        // 0x005F8000) with the value and the write count, to find who sets a register and when.
+        static const std::vector<std::uint32_t> watch = [] {
+            std::vector<std::uint32_t> w;
+            if (const char* e = std::getenv("DREAM_PVR_WATCH"))
+                for (const char* q = e; *q;) {
+                    char* end = nullptr;
+                    const unsigned long v = std::strtoul(q, &end, 16);
+                    if (end == q)
+                        break;
+                    w.push_back(static_cast<std::uint32_t>(v));
+                    q = *end ? end + 1 : end;
+                }
+            return w;
+        }();
+        static std::uint64_t watch_count = 0;
+        if (!watch.empty() && std::find(watch.begin(), watch.end(), off) != watch.end() &&
+            ++watch_count <= 2000)
+            std::fprintf(stderr, "pvr watch: +%03X <- %08X (size %u, renders %llu)\n", off, value,
+                         size, static_cast<unsigned long long>(renders));
+    }
     if ((off >= Spg::kRegLo - kRegBase && off < Spg::kRegHi - kRegBase) || addr == Spg::kStatus) {
         spg_.write(addr, value, size);
         return;
