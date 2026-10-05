@@ -1029,7 +1029,11 @@ void Mixer::sample(std::int16_t& left, std::int16_t& right) {
     ++samples;
     SampleType mixl = 0, mixr = 0;
     std::memset(dsp_.MIXS, 0, sizeof dsp_.MIXS);
-    for (int i = 0; i < 64; ++i) chans_[i].step_mix(mixl, mixr);
+    // A disabled channel contributes exactly zero (step_channel's early-out); skipping it saves
+    // 64 scattered calls per sample when few voices play (dreamcomp; perf study section 6.4).
+    for (int i = 0; i < 64; ++i)
+        if (chans_[i].enabled)
+            chans_[i].step_mix(mixl, mixr);
     DspData* dsp = reinterpret_cast<DspData*>(regs_ + 0x3000);
     const DspOutVol* out_vol = reinterpret_cast<const DspOutVol*>(regs_ + 0x2000);
     // CDDA (EXTS) is not modelled: silence on both inputs.
