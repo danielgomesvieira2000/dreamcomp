@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def img(sp):
-        sp.add_argument("image", help=".gdi or .chd")
+        sp.add_argument("image", help=".gdi, .cue or .chd")
         sp.add_argument("--chdman", action="store_true",
                         help="for .chd: use chdman extractcd even if libchdr is available")
 

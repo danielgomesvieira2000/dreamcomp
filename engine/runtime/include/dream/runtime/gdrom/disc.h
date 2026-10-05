@@ -55,7 +55,7 @@ protected:
     void finish_tracks();  // sorts, sets the disc type from the layout
 };
 
-// Opens by extension: .gdi or .chd. Returns nullptr and sets `error` on failure.
+// Opens by extension: .gdi, .cue (Redump GD-ROM layout) or .chd. Returns nullptr and sets `error` on failure.
 std::unique_ptr<Disc> open_disc(const std::filesystem::path& path, std::string& error);
 
 }  // namespace dream::gdrom

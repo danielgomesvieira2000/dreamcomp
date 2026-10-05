@@ -152,6 +152,102 @@ public:
         return true;
     }
 
+    // A Redump-style .cue (dreamcomp addition). Tracks are laid out back to back from LBA 0 in
+    // the single-density area; "REM HIGH-DENSITY AREA" restarts the layout at LBA 45000. A
+    // track's LBA is its INDEX 01; anything before that in its file (an audio track's INDEX 00
+    // pregap) is skipped through the file offset, which is how a GDI describes the same disc.
+    bool open_cue(const std::filesystem::path& path, std::string& error) {
+        path_ = path.string();
+        std::ifstream in(path);
+        if (!in) {
+            error = "cannot open " + path_;
+            return false;
+        }
+        const auto dir = path.parent_path();
+        std::filesystem::path file;
+        std::uint32_t file_lba = 0, next_lba = 0;
+        struct Pending {
+            unsigned number = 0;
+            bool data = false;
+            std::uint32_t ssize = 2352;
+            std::filesystem::path file;
+            std::uint32_t file_lba = 0;
+        };
+        std::vector<Pending> pending;
+        std::map<unsigned, std::uint32_t> index01;  // track -> frames into its file
+        auto msf = [](const std::string& s) -> std::uint32_t {
+            unsigned m = 0, sec = 0, f = 0;
+            std::sscanf(s.c_str(), "%u:%u:%u", &m, &sec, &f);
+            return (m * 60u + sec) * 75u + f;
+        };
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream ls(line);
+            std::string kw;
+            ls >> kw;
+            for (auto& ch : kw) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            if (kw == "REM") {
+                std::string rest;
+                std::getline(ls, rest);
+                if (rest.find("HIGH-DENSITY AREA") != std::string::npos)
+                    next_lba = kHdAreaLba;
+            } else if (kw == "FILE") {
+                ls >> std::ws;
+                std::string name;
+                if (ls.peek() == '"') {
+                    ls.get();
+                    std::getline(ls, name, '"');
+                } else {
+                    ls >> name;
+                }
+                file = dir / name;
+                std::error_code ec;
+                const auto fsize = std::filesystem::file_size(file, ec);
+                if (ec) {
+                    error = "cue track file missing: " + file.string();
+                    return false;
+                }
+                file_lba = next_lba;
+                next_lba += static_cast<std::uint32_t>(fsize / 2352);
+            } else if (kw == "TRACK") {
+                Pending p;
+                std::string mode;
+                ls >> p.number >> mode;
+                p.data = mode != "AUDIO";
+                p.ssize = mode.find("2048") != std::string::npos ? 2048u : 2352u;
+                p.file = file;
+                p.file_lba = file_lba;
+                pending.push_back(p);
+            } else if (kw == "INDEX" && !pending.empty()) {
+                unsigned idx = 0;
+                std::string at;
+                ls >> idx >> at;
+                if (idx == 1)
+                    index01[pending.back().number] = msf(at);
+            }
+        }
+        for (const auto& p : pending) {
+            const std::uint32_t skip = index01.count(p.number) ? index01[p.number] : 0;
+            std::error_code ec;
+            const auto fsize = std::filesystem::file_size(p.file, ec);
+            const std::uint64_t offset = static_cast<std::uint64_t>(skip) * p.ssize;
+            Track t;
+            t.number = p.number;
+            t.lba = p.file_lba + skip;
+            t.sector_size = p.ssize;
+            t.sectors = static_cast<std::uint32_t>((fsize - offset) / p.ssize);
+            t.data = p.data;
+            tracks_.push_back(t);
+            files_[p.number] = {p.file.string(), offset};
+        }
+        if (tracks_.empty()) {
+            error = "cue lists no tracks";
+            return false;
+        }
+        finish_tracks();
+        return true;
+    }
+
     bool read_raw(std::uint32_t lba, std::uint8_t* out) override {
         const Track* t = track_for(lba);
         if (!t)
@@ -164,8 +260,14 @@ public:
         }
         const std::uint64_t pos =
             f.offset + static_cast<std::uint64_t>(lba - t->lba) * t->sector_size;
-        if (std::fseek(f.handle, static_cast<long>(pos), SEEK_SET) != 0)
+        // 64-bit seek: `long` is 32 bits on Windows and a GD-ROM data track passes 1 GB.
+#ifdef _WIN32
+        if (_fseeki64(f.handle, static_cast<long long>(pos), SEEK_SET) != 0)
             return false;
+#else
+        if (fseeko(f.handle, static_cast<off_t>(pos), SEEK_SET) != 0)
+            return false;
+#endif
         return std::fread(out, 1, t->sector_size, f.handle) == t->sector_size;
     }
 
@@ -346,6 +448,10 @@ std::unique_ptr<Disc> open_disc(const std::filesystem::path& path, std::string& 
     if (ext == ".gdi") {
         auto d = std::make_unique<GdiDisc>();
         return d->open(path, error) ? std::unique_ptr<Disc>(std::move(d)) : nullptr;
+    }
+    if (ext == ".cue") {
+        auto d = std::make_unique<GdiDisc>();
+        return d->open_cue(path, error) ? std::unique_ptr<Disc>(std::move(d)) : nullptr;
     }
     if (ext == ".chd") {
         auto d = std::make_unique<ChdDisc>();
