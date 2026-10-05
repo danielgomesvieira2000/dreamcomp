@@ -29,9 +29,9 @@ include(cmake/DreamcompPort.cmake)
 
 # The dreamcomp layer linked into every port executable. An OBJECT library, because its
 # extensions register themselves from static constructors that a static library would drop.
-add_library(dreamcomp_core OBJECT src/core.cpp src/settings.cpp)
+add_library(dreamcomp_core OBJECT src/core.cpp src/settings.cpp src/geometry_match.cpp)
 target_include_directories(dreamcomp_core PUBLIC ${DREAMCOMP_ROOT}/include)
-target_link_libraries(dreamcomp_core PUBLIC dream::runtime)
+target_link_libraries(dreamcomp_core PUBLIC dream::runtime dream::render)
 target_compile_features(dreamcomp_core PUBLIC cxx_std_20)
 if(TARGET dream_render_vk)
   target_link_libraries(dreamcomp_core PUBLIC dream::render_vk)
@@ -52,4 +52,13 @@ if(DREAMCOMP_FRONTEND)
   else()
     message(STATUS "dreamcomp: no SDL3 or no renderer; the launcher is not built")
   endif()
+endif()
+
+# Developer tools (dreamcomp): not part of a port's executable.
+if(TARGET dream_render)
+  add_executable(dreamcomp_ta_dump tools/native/ta_dump.cpp)
+  target_link_libraries(dreamcomp_ta_dump PRIVATE dream::render)
+  add_executable(dreamcomp_ta_match tools/native/ta_match.cpp src/geometry_match.cpp)
+  target_include_directories(dreamcomp_ta_match PRIVATE ${DREAMCOMP_ROOT}/include)
+  target_link_libraries(dreamcomp_ta_match PRIVATE dream::render)
 endif()

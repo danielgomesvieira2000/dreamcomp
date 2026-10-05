@@ -180,6 +180,7 @@ struct Live {
         if (dream::render::add_background(decoder.frame(), pvr_.reg_block(), memory_.vram(),
                                           dream::mem::DcMemory::kVramSize))
             ++backgrounds;
+        for (auto* e : dream::host::extensions()) e->on_frame(decoder.frame());
         const dream::render::Frame& frame = decoder.frame();
         // PT_ALPHA_REF: the punch-through threshold the guest chose, which changes per scene.
         geometry.alpha_ref = static_cast<float>(pvr_.reg(0x11C) & 0xFFu) / 255.0f;
@@ -1140,6 +1141,7 @@ void usage(const char* argv0, std::FILE* out) {
         "...\n"
         "  --dump-ta-frame N      capture the Nth render only\n"
         "  --dump-ta-at-frame N   capture the first render at or after guest frame N\n"
+        "  --dump-ta-count K      with --dump-ta-at-frame: K consecutive renders, FILE.000...\n"
         "  --dump-vram FILE       video memory and the PVR registers from the same instant\n"
         "  --dump-aram FILE       the 2 MB of sound RAM at the stop\n"
         "  --dump FILE            a memory range at the stop\n"
@@ -1230,6 +1232,7 @@ int main(int argc, char** argv) {
     // --dump-ta-at-frame N: the first render at or after guest frame N. A visual fault is noticed
     // at a moment in the run, and the render index for that moment is not stable between runs.
     std::uint64_t dump_ta_at_frame = 0;
+    unsigned dump_ta_count = 1;  // --dump-ta-count K (dreamcomp): K consecutive renders from there
     // --press BUTTON@FRAME[,BUTTON@FRAME...]: hold a controller button for 8 frames from that
     // frame, so a headless run can get past "press start" screens. Names: a b c x y z start up
     // down left right.
@@ -1338,6 +1341,8 @@ int main(int argc, char** argv) {
             dump_ta_frame = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--dump-ta-at-frame") && i + 1 < argc)
             dump_ta_at_frame = std::strtoull(argv[++i], nullptr, 0);
+        else if (!std::strcmp(argv[i], "--dump-ta-count") && i + 1 < argc)
+            dump_ta_count = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--press") && i + 1 < argc)
             presses = argv[++i];
         else if (!std::strcmp(argv[i], "--max-seconds") && i + 1 < argc)
@@ -1559,7 +1564,10 @@ int main(int argc, char** argv) {
             // substantial renders are written as FILE.000, FILE.001 and so on, so a bring-up can
             // look for the one that holds the scene.
             char name[512];
-            if (dump_ta_at_frame) {
+            static unsigned at_frame_written = 0;
+            if (dump_ta_at_frame && dump_ta_count > 1) {
+                std::snprintf(name, sizeof name, "%s.%03u", dump_ta.c_str(), at_frame_written);
+            } else if (dump_ta_at_frame) {
                 std::snprintf(name, sizeof name, "%s", dump_ta.c_str());
             } else if (dump_ta_frame) {
                 if (seen != dump_ta_frame)
@@ -1602,7 +1610,7 @@ int main(int argc, char** argv) {
                 }
                 std::printf("wrote %s: video memory as it was for that render\n", vpath.c_str());
             }
-            if (dump_ta_frame || dump_ta_at_frame)
+            if (dump_ta_frame || (dump_ta_at_frame && ++at_frame_written >= dump_ta_count))
                 one_shot_done = true;
         };
     }

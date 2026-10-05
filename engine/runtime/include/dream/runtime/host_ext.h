@@ -20,6 +20,9 @@
 namespace dream {
 class System;
 }
+namespace dream::render {
+struct Frame;
+}
 
 namespace dream::host {
 
@@ -39,6 +42,9 @@ public:
     virtual void usage(std::FILE* out) { (void)out; }
     virtual void on_start(System& sys) { (void)sys; }
     virtual void on_vblank(System& sys) { (void)sys; }
+    // Each decoded display list, before it is drawn (window builds only). Vertices are in the
+    // guest's 640x480 screen space and may be edited: widescreen HUD correction, debug overlays.
+    virtual void on_frame(render::Frame& frame) { (void)frame; }
     virtual void on_stop(System& sys, const char* why) { (void)sys, (void)why; }
 };
 

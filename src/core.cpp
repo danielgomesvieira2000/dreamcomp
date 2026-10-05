@@ -18,8 +18,10 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "dream/render/display_list.h"
 #include "dream/runtime/host_ext.h"
 #include "dream/runtime/system.h"
 #include "dreamcomp/port.h"
@@ -365,6 +367,7 @@ public:
         // Settings changed by flags this run are not saved unless asked: a test run must not
         // leave its choices behind in the player's file.
         launch_dirty_ = g_settings.dirty();
+        hud_fix_ = g_settings.get_bool("hud_fix", true);
         apply_presentation();
         if (g_port && g_port->on_start)
             g_port->on_start(sys, g_settings);
@@ -380,7 +383,57 @@ public:
             g_port->on_vblank(sys, g_settings);
     }
 
+    // Widescreen HUD correction (PortInfo::hud, docs/HUD.md). Setting `hud_fix` (default on)
+    // turns it off for an A/B. Counts are reported at exit.
+    void on_frame(dream::render::Frame& frame) override {
+        if (!g_port || !g_port->hud.enabled || !widescreen() || !hud_fix_)
+            return;
+        const auto& rule = g_port->hud;
+        const float k = (4.0f / 3.0f) / target_aspect();  // < 1: squeeze back
+        // Pass 1: depth of every flat sprite, and how many sprites share each depth.
+        auto flat_z = [&](const dream::render::Polygon& p, float& z) {
+            if ((p.pcw >> 29) != 5u || p.count == 0)
+                return false;
+            z = frame.vertices[p.first].z;
+            for (std::uint32_t i = 1; i < p.count; ++i)
+                if (frame.vertices[p.first + i].z != z)
+                    return false;
+            return true;
+        };
+        depth_counts_.clear();
+        for (const auto& list : frame.lists)
+            for (const auto& p : list) {
+                float z;
+                if (flat_z(p, z))
+                    ++depth_counts_[z];
+            }
+        for (auto& list : frame.lists) {
+            for (const auto& p : list) {
+                float z;
+                if (!flat_z(p, z))
+                    continue;
+                if (z < rule.overlay_z && depth_counts_[z] < rule.min_shared)
+                    continue;
+                float x0 = 1e30f, x1 = -1e30f;
+                for (std::uint32_t i = 0; i < p.count; ++i) {
+                    x0 = std::min(x0, frame.vertices[p.first + i].x);
+                    x1 = std::max(x1, frame.vertices[p.first + i].x);
+                }
+                if (x1 - x0 > rule.full_width)
+                    continue;
+                for (std::uint32_t i = 0; i < p.count; ++i) {
+                    auto& v = frame.vertices[p.first + i];
+                    v.x = 320.0f + (v.x - 320.0f) * k;
+                }
+                ++hud_corrected_;
+            }
+        }
+    }
+
     void on_stop(dream::System& sys, const char* why) override {
+        if (hud_corrected_)
+            std::printf("dreamcomp: widescreen HUD: %llu primitives corrected\n",
+                        static_cast<unsigned long long>(hud_corrected_));
         (void)sys, (void)why;
         if (save_on_exit_ || (g_settings.dirty() && !launch_dirty_))
             g_settings.save();
@@ -402,6 +455,9 @@ private:
     }
 
     bool save_on_exit_ = false;
+    bool hud_fix_ = true;
+    std::unordered_map<float, unsigned> depth_counts_;
+    std::uint64_t hud_corrected_ = 0;
     bool launch_dirty_ = false;
 };
 

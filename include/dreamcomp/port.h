@@ -37,6 +37,21 @@ struct PortInfo {
     bool widescreen_anamorphic = true;
     float max_aspect = 32.0f / 9.0f;
 
+    // Widescreen HUD correction (anamorphic ports). The game draws its 2D HUD in 640x480 screen
+    // space, so the horizontal stretch that widens the 3D view also widens the HUD. Primitives
+    // the rule matches are scaled back around the screen centre: the HUD keeps its original 4:3
+    // layout and proportions, centred. Measured per game (docs/HUD.md); off when !enabled.
+    // The rule: a sprite (PCW para type 5) drawn at a single depth is HUD when another sprite in
+    // the same frame shares that exact depth (2D layers are drawn at a common 1/w; 3D particles
+    // each have their own), or when its depth is at least `overlay_z` (a fixed overlay layer).
+    struct HudRule {
+        bool enabled = false;
+        unsigned min_shared = 2;      // sprites at one depth for that depth to count as a 2D layer
+        float overlay_z = 1000.0f;    // 1/w at or above this is always a 2D overlay
+        float full_width = 600.0f;    // wider than this: a fade or flash covering the screen; left
+    };
+    HudRule hud;
+
     // Anything else the port wants each vblank (cheats, debug overlays...).
     void (*on_vblank)(dream::System& sys, Settings& settings) = nullptr;
     // Once, before the first guest instruction.

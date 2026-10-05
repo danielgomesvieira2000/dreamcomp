@@ -32,11 +32,11 @@ Entry gate: met (boots to menus on the engine).
 |---|---|---|
 | Internal resolution | engine `--scale 1-4`; setting `scale` | works (engine) |
 | Widescreen (anamorphic) | `PortInfo::widescreen`, Flycast value for T1401N | prototyped; **gameplay crash at frame ~2272 under investigation** |
-| Widescreen HUD fix | hooks on the 2D draw path, per game | not started |
+| Widescreen HUD fix | per-frame sprite-depth rule (docs/HUD.md): HUD keeps its 4:3 proportions, centred | done for Soulcalibur; edge anchoring needs an inspector |
 | Texture dump / replacement packs | content hash (XXH64, scheme v1) over the raw VRAM bytes the decoder reads (+ used palette colours / VQ codebook); `--dump-textures DIR`, `--texture-pack DIR`; settings `dump_textures`, `texture_pack` (default `<config dir>/textures`); in-house PNG codec | works (Soulcalibur: dump + 1 replaced texture verified in-game); no manifest, no mip chain, no async preload yet. `docs/TEXTURE-PACKS.md` |
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |
 | Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
-| Higher frame rate | frame generation (engine study: reprojection, 35 days); game logic stays at 60 | research |
+| Higher frame rate | geometry interpolation between game frames (docs/INTERPOLATION.md); logic stays at 60 | G1 passed (97.8-100 % of vertices pair across frames); implementation next |
 | Settings UI / launcher (disc picker) | RmlUi launcher before the game ([FRONTEND.md](FRONTEND.md)): disc check, graphics, rumble, texture packs, mods; Apply/Start | phase 1 done 2026-10-05: screenshots of every tab checked, keyboard + synthetic pad navigation and Apply/Start scripted; **no physical pad tried, Daniel has not used it yet**; in-game overlay not started |
 
 ## P3 — Platforms
