@@ -48,7 +48,17 @@ public:
     // picture.
     unsigned high_water = 8192;
 
-    std::uint64_t pushed = 0, dropped = 0, blocks = 0;
+    // Dynamic rate control (dreamcomp): the guest's clock and the sound card's never agree
+    // exactly, so the queue drifts until it overflows (a dropped block, a click) or runs dry (an
+    // underrun, a crackle). Each block nudges SDL's playback ratio by at most `max_skew` (0.5 %,
+    // far below what anyone hears as pitch) to hold the queue at `target` samples. Dropping is
+    // kept for the case rate control cannot fix, such as the guest having been paused.
+    unsigned target = 3072;   // ~70 ms at 44.1 kHz: room for a slow frame, short enough for sync
+    float max_skew = 0.005f;
+    bool rate_control = true;
+
+    std::uint64_t pushed = 0, dropped = 0, blocks = 0, underruns = 0;
+    float ratio = 1.0f;  // the playback ratio last set
     const std::string& error() const noexcept { return error_; }
 
 private:

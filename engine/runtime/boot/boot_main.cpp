@@ -2186,10 +2186,13 @@ int main(int argc, char** argv) {
 #ifdef DREAM_WITH_AUDIO
     if (sink.is_open()) {
         sink.flush();
-        std::printf("audio: %llu samples played in %llu blocks, %llu dropped, %u still queued\n",
+        std::printf("audio: %llu samples played in %llu blocks, %llu dropped, %llu underruns, "
+                    "%u still queued, playback ratio %.4f\n",
                     static_cast<unsigned long long>(sink.pushed),
                     static_cast<unsigned long long>(sink.blocks),
-                    static_cast<unsigned long long>(sink.dropped), sink.queued_samples());
+                    static_cast<unsigned long long>(sink.dropped),
+                    static_cast<unsigned long long>(sink.underruns), sink.queued_samples(),
+                    static_cast<double>(sink.ratio));
     }
 #endif
     if (hash_file) {

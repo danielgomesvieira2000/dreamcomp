@@ -3,6 +3,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
 namespace dream::audio {
 
 Sink::~Sink() {
@@ -63,10 +68,27 @@ void Sink::push(std::int16_t left, std::int16_t right) {
     ++pushed;
     if (block_.size() < kBlockFrames * 2)
         return;
-    // The guest is ahead of the device: throw this block away rather than let the delay between
-    // what is on screen and what is heard grow without limit. Dropping is audible once, whereas a
-    // queue that only grows is audible for the rest of the run.
-    if (queued_samples() > high_water) {
+    const unsigned queued = queued_samples();
+    // Ran dry since the last block (not counting the very first fill): something was audible.
+    if (queued == 0 && blocks > 0)
+        ++underruns;
+    if (rate_control && target > 0) {
+        // Proportional control on the queue error, clamped. Above target: play slightly faster.
+        const float error = (static_cast<float>(queued) - static_cast<float>(target)) /
+                            static_cast<float>(target);
+        float r = 1.0f + std::clamp(error * max_skew, -max_skew, max_skew);
+        if (std::abs(r - ratio) > 0.0002f) {
+            SDL_SetAudioStreamFrequencyRatio(stream_, r);
+            ratio = r;
+        }
+    }
+    // The guest is far ahead of the device: throw this block away rather than let the delay
+    // between what is on screen and what is heard grow without limit. Dropping is audible once,
+    // whereas a queue that only grows is audible for the rest of the run.
+    if (queued > high_water) {
+        if (std::getenv("DREAM_AUDIO_TRACE"))
+            std::fprintf(stderr, "audio: drop at %llu ms, %u queued\n",
+                         static_cast<unsigned long long>(SDL_GetTicks()), queued);
         dropped += kBlockFrames;
         block_.clear();
         return;
