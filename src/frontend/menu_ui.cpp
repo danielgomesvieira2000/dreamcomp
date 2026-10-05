@@ -508,6 +508,42 @@ std::string MenuUi::row_toggle(const std::string& key, const std::string& name, 
            "\"><span class=\"knob\"></span></span></div><span class=\"pend\"></span></div>";
 }
 
+std::string MenuUi::row_radio(const std::string& key, const std::string& name,
+                              const std::vector<Choice>& choices, const std::string& current,
+                              const std::string& help, bool live,
+                              const std::vector<bool>& enabled) {
+    const std::string id = "r-" + key;
+    descs_[id] = {name, help, live};
+    std::string r = "<div id=\"" + id + "\" class=\"orow" +
+                    (draft_.pending(key) ? " pending" : "") + "\"><div class=\"oname\">" +
+                    name_html(key, name, live) + "<span class=\"pend\"></span></div><div "
+                    "class=\"oopts\">";
+    for (std::size_t i = 0; i < choices.size(); ++i) {
+        const bool on = i >= enabled.size() || enabled[i];
+        const bool sel = choices[i].value == current;
+        r += "<div id=\"o-" + key + "-" + id_safe(choices[i].value) + "\" class=\"opt" +
+             (sel ? " sel" : "") + (on ? " focusable" : " off") + "\" act=\"" +
+             (on ? "set:" + key + "=" + choices[i].value : std::string()) + "\">" +
+             esc(choices[i].label) + "</div>";
+    }
+    return r + "</div></div>";
+}
+
+std::string MenuUi::row_onoff(const std::string& key, const std::string& name, bool on,
+                              const std::string& help, bool live) {
+    return row_radio(key, name, {{"false", "Off"}, {"true", "On"}}, on ? "true" : "false", help,
+                     live);
+}
+
+void MenuUi::select(const std::string& key, const std::string& value) {
+    if (key == "texture_pack")
+        toggle(key, value == "true" ? 1 : -1);
+    else
+        draft_.set(key, value);
+    want_focus_ = "o-" + key + "-" + id_safe(value);
+    dirty_ = true;
+}
+
 std::string MenuUi::row_slider(const std::string& key, const std::string& name, int percent,
                                const std::string& help, bool live) {
     const std::string id = "r-" + key;
@@ -611,8 +647,8 @@ std::string MenuUi::tab_general() {
                     "How strongly controllers with motors vibrate when the game asks for it. 0 % "
                     "turns rumble off.",
                     true);
-    const auto fps = fps_choices();
-    s += row_cycle("fps", "Frame rate", fps[choice_index(fps, draft_.get("fps", "auto"))].label,
+    s += row_radio("fps", "Frame rate", {{"auto", "Auto"}, {"120", "120"}, {"60", "60"}},
+                   draft_.get("fps", "auto"),
                    "<b>Auto</b> blends an in-between frame between the game's frames on displays "
                    "of 120 Hz or more.<br/><b>120</b>: always blend.<br/><b>60</b>: only the "
                    "game's own frames.<br/><br/>The game itself always runs at 60.",
@@ -844,37 +880,50 @@ std::string MenuUi::tab_graphics() {
     const bool anam = cfg_.port && cfg_.port->widescreen_anamorphic;
     std::string s;
     const int scale = std::clamp(draft_.get_int("scale", 2), 1, 8);
-    s += row_cycle("scale", "Resolution", scale_label(scale, draft_aspect(), anam),
+    std::vector<Choice> scales;
+    for (int i = 1; i <= 8; ++i)
+        scales.push_back({std::to_string(i), i == 1 ? std::string("Original") : std::to_string(i) + "x"});
+    s += row_radio("scale", "Resolution", scales, std::to_string(scale),
                    "Draws the 3D scene at a multiple of the console's 640\xC3\x97" "480. Higher is "
-                   "sharper and needs a faster graphics card.",
+                   "sharper and needs a faster graphics card.<br/><br/>Now: " +
+                       esc(scale_label(scale, draft_aspect(), anam)),
                    false);
-    if (ws) {
-        const auto choices = aspect_choices(true, cfg_.port->max_aspect);
-        s += row_cycle("aspect", "Aspect ratio",
-                       choices[choice_index(choices, draft_.get("aspect", "16:9"))].label,
-                       "A wider view of the scene, not a stretch. 4:3 is the original picture.",
-                       false);
-    }
-    const auto fits = fit_choices();
-    s += row_cycle("fit", "Fit to window", fits[choice_index(fits, draft_.get("fit", "crop"))].label,
+    // Every aspect ratio is listed; those the port has not been verified with are greyed out.
+    const std::vector<Choice> aspects = {{"4:3", "4:3"}, {"16:9", "16:9"}, {"21:9", "21:9"},
+                                         {"32:9", "32:9"}};
+    std::vector<bool> aspect_on;
+    for (const auto& c : aspects)
+        aspect_on.push_back(c.value == "4:3" ||
+                            (ws && parse_aspect(c.value) <= cfg_.port->max_aspect + 0.01f));
+    s += row_radio("aspect", "Aspect ratio", aspects, ws ? draft_.get("aspect", "16:9") : "4:3",
+                   ws ? "A wider view of the scene, not a stretch. 4:3 is the original picture."
+                      : "This port shows the original 4:3 picture only.",
+                   false, aspect_on);
+    s += row_radio("fit", "Fit to window",
+                   {{"crop", "Crop"}, {"letterbox", "Letterbox"}, {"stretch", "Stretch"}},
+                   draft_.get("fit", "crop"),
                    "How the picture fills the window when their shapes differ.<br/><br/><b>Crop</b> "
                    "fills it without black bars. <b>Letterbox</b> shows the whole picture. "
                    "<b>Stretch</b> fills it and distorts the shape.",
                    true);
-    s += row_toggle("fullscreen", "Fullscreen", draft_.get_bool("fullscreen", false),
-                    "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
-                    true);
+    s += row_radio("fullscreen", "Window mode", {{"false", "Windowed"}, {"true", "Fullscreen"}},
+                   draft_.get_bool("fullscreen", false) ? "true" : "false",
+                   "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
+                   true);
     if (cfg_.port && cfg_.port->hud.enabled) {
-        s += row_toggle("hud_fix", "Widescreen HUD", draft_.get_bool("hud_fix", true),
-                        "Keeps the 2D HUD in its original proportions when the picture is wider "
-                        "than 4:3.",
-                        true);
-        const std::vector<Choice> layouts = {{"edges", "Screen edges"}, {"center", "Centered 4:3"}};
-        s += row_cycle("hud_layout", "HUD layout",
-                       layouts[choice_index(layouts, draft_.get("hud_layout", "edges"))].label,
-                       "<b>Screen edges</b> keeps health bars and names at the edges of a wide "
-                       "screen. <b>Centered 4:3</b> keeps the original layout in the middle.",
+        const bool hud = draft_.get_bool("hud_fix", true);
+        const bool wide = draft_aspect() > 4.0f / 3.0f + 0.01f;
+        s += row_onoff("hud_fix", "Widescreen HUD", hud,
+                       "Keeps the 2D HUD in its original proportions when the picture is wider "
+                       "than 4:3.",
                        true);
+        s += row_radio("hud_layout", "HUD layout",
+                       {{"edges", "Screen edges"}, {"center", "Centered 4:3"}},
+                       draft_.get("hud_layout", "edges"),
+                       "<b>Screen edges</b> keeps health bars and names at the edges of a wide "
+                       "screen. <b>Centered 4:3</b> keeps the original layout in the middle.<br/>"
+                       "<br/>Needs Widescreen HUD on and a wide aspect ratio.",
+                       true, {hud && wide, hud && wide});
     }
     return s;
 }
@@ -888,11 +937,11 @@ std::string MenuUi::tab_mods() {
     std::string s;
     const std::string pack = draft_.get("texture_pack");
     const auto dir = texture_pack_dir(pack, config_dir_);
-    s += row_toggle("texture_pack", "Texture pack", texture_pack_on(pack),
+    s += row_onoff("texture_pack", "Texture pack", texture_pack_on(pack),
                     "Replaces the game's textures with the PNG files in<br/>" + esc(u8(dir)), false);
     s += row_button("r-opentex", "open-textures", "Open texture folder", "Open",
                     "Opens " + esc(u8(dir)) + " (created if missing). Put a pack's files there.");
-    s += row_toggle("dump_textures", "Dump textures", draft_.get_bool("dump_textures", false),
+    s += row_onoff("dump_textures", "Dump textures", draft_.get_bool("dump_textures", false),
                     "For pack authors: writes every new texture the game uses to<br/>" +
                         esc(u8(config_dir_ / "texture_dump")),
                     false);
@@ -1211,6 +1260,10 @@ void MenuUi::run_act(const std::string& act, Rml::Event* ev) {
         tab_ = std::clamp(std::atoi(arg.c_str()), 0, kTabCount - 1);
         want_focus_ = std::string("tab-") + kTabs[tab_][0];
         dirty_ = true;
+    } else if (kind == "set") {
+        const auto eq = arg.find('=');
+        if (eq != std::string::npos)
+            select(arg.substr(0, eq), arg.substr(eq + 1));
     } else if (kind == "cycle" || kind == "next") {
         adjust(arg, +1);
     } else if (kind == "prev") {
@@ -1398,6 +1451,42 @@ void MenuUi::navigate(Rml::Element* focus, Rml::Input::KeyIdentifier key) {
             else if (key == Rml::Input::KI_UP && it != items.begin())
                 target = *(it - 1);
         }
+    } else if (focus->IsClassSet("opt") &&
+               (key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT)) {
+        target = nav_search(focus->GetParentNode(), focus, key);
+    } else if (region == rows && (key == Rml::Input::KI_UP || key == Rml::Input::KI_DOWN)) {
+        // Up/down: the nearest row in that direction, on its selected choice (else the one
+        // closest horizontally). Then out to the tabs or the footer as below.
+        Rml::ElementList list;
+        rows->QuerySelectorAll(list, ".focusable");
+        const Rml::Rectanglef src = box_of(focus);
+        const bool down = key == Rml::Input::KI_DOWN;
+        float best_gap = 1e9f;
+        for (Rml::Element* e : list) {
+            const Rml::Rectanglef r = box_of(e);
+            const float gap = down ? r.p0.y - src.p1.y : src.p0.y - r.p1.y;
+            if (e != focus && gap >= -1.0f && gap < best_gap)
+                best_gap = gap;
+        }
+        float best_x = 1e9f;
+        bool best_sel = false;
+        for (Rml::Element* e : list) {
+            const Rml::Rectanglef r = box_of(e);
+            const float gap = down ? r.p0.y - src.p1.y : src.p0.y - r.p1.y;
+            if (e == focus || gap < -1.0f || gap > best_gap + 6.0f)
+                continue;
+            const bool sel = e->IsClassSet("sel");
+            const float dx = std::fabs((r.p0.x + r.p1.x) * 0.5f - (src.p0.x + src.p1.x) * 0.5f);
+            if (!target || (sel && !best_sel) || (sel == best_sel && dx < best_x)) {
+                target = e;
+                best_x = dx;
+                best_sel = sel;
+            }
+        }
+        if (!target && down && foot)
+            target = foot->QuerySelector(".focusable");
+        if (!target && !down)
+            target = doc_->GetElementById(std::string("tab-") + kTabs[tab_][0]);
     } else {
         target = nav_search(region, focus, key);
         if (!target && key == Rml::Input::KI_DOWN) {

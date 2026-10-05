@@ -463,6 +463,40 @@ body.ingame #panel { background-color: rgba(8, 12, 22, 228); }
 .button:focus { border-color: #4fb3ff; background-color: rgba(79, 179, 255, 30); color: #ffffff; }
 .button.attention { border-color: #4fb3ff; color: #8fd0ff; }
 
+/* ---- option rows (RecompFrontend's radio: every choice visible, the selected one underlined) - */
+.orow {
+	padding: 12dp 18dp 14dp 26dp;
+	border-left: 3dp transparent;
+}
+.orow:hover { background-color: rgba(255, 255, 255, 6); }
+.oname {
+	display: block;
+	font-size: 21dp;
+	font-weight: bold;
+	letter-spacing: 1dp;
+	color: #dfe5ef;
+	margin-bottom: 4dp;
+}
+.orow.pending .oname { color: #8fd0ff; }
+.orow.pending .pend { background-color: #4fb3ff; }
+.orow .pend { display: inline-block; margin-left: 12dp; margin-bottom: 3dp; }
+.oopts { display: flex; flex-direction: row; flex-wrap: wrap; }
+.opt {
+	padding: 6dp 2dp 4dp 2dp;
+	margin-right: 22dp;
+	font-size: 16dp;
+	font-weight: bold;
+	letter-spacing: 2dp;
+	text-transform: uppercase;
+	color: rgba(255, 255, 255, 153);
+	border-bottom: 2dp transparent;
+}
+.opt:hover { color: rgba(255, 255, 255, 204); }
+.opt.sel { color: #ffffff; border-bottom-color: #f2f2f2; }
+.opt:focus { color: #ffffff; border-bottom-color: #f79e08; }
+.opt.sel:focus { border-bottom-color: #ffd794; }
+.opt.off { color: rgba(255, 255, 255, 50); cursor: arrow; }
+
 /* ---- controls (the N64 recomp layout: player cards, then two slots per input) ---------------- */
 #pbody.wide #pdesc { display: none; }
 #pbody.wide #prows { width: 100%; }

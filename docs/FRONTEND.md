@@ -36,6 +36,11 @@ in-game panel off.
 | Sound | Master volume | live |
 | Mods | Texture pack, Open texture folder, Dump textures, mods list (on/off, ▲▼ order, first wins), Open mods folder | next start |
 
+Option rows copy RecompFrontend's radio rows: the name, then every choice in a row; the selected
+one white and underlined, the others dim, unavailable ones greyed out (aspect ratios beyond
+`PortInfo::max_aspect`; HUD layout while the HUD fix is off or the picture is 4:3). Up/down moves to
+the nearest row, onto its selected choice.
+
 **Values take effect on Apply.** There is no discard: closing the panel keeps unapplied edits,
 marked with a dot and "Not applied yet", for next time. In game, rows that only take effect at the
 next start carry a *Next start* badge and say so in the description. Loading a disc is an action,
@@ -67,7 +72,8 @@ The engine's F1 binding screen still exists and edits the first boxes.
 | Action | Keyboard | Gamepad | Mouse |
 |---|---|---|---|
 | Move | arrows | d-pad / left stick (repeats) | hover (moves the description) |
-| Change a value | ← → on the row | d-pad ← → | click the row or its ‹ › / the slider |
+| Choose an option | ← → between the choices, Enter selects | d-pad ← →, A selects | click the choice (greyed ones are unavailable) |
+| Slider | ← → on the row | d-pad ← → | click on the bar |
 | Activate | Enter / Space | A | click |
 | Close / back / cancel | Esc / Backspace | B (in game also Select) | × |
 | Tabs | Q / E | LB / RB | click |

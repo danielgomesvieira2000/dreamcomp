@@ -111,6 +111,15 @@ private:
     std::string tab_mods();
     std::string row_cycle(const std::string& key, const std::string& name, const std::string& value,
                           const std::string& help, bool live);
+    // RecompFrontend's option row: the name, then every choice in a row; the selected one white
+    // and underlined, the others dim, unavailable ones greyed out. Click (or Enter / A) selects.
+    std::string row_radio(const std::string& key, const std::string& name,
+                          const std::vector<Choice>& choices, const std::string& current,
+                          const std::string& help, bool live,
+                          const std::vector<bool>& enabled = {});
+    std::string row_onoff(const std::string& key, const std::string& name, bool on,
+                          const std::string& help, bool live);
+    void select(const std::string& key, const std::string& value);
     std::string row_toggle(const std::string& key, const std::string& name, bool on,
                            const std::string& help, bool live);
     std::string row_slider(const std::string& key, const std::string& name, int percent,
