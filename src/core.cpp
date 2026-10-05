@@ -556,6 +556,16 @@ public:
 #ifdef DREAMCOMP_WITH_FRONTEND
     bool on_event(const void* ev) override { return overlay_ && overlay_->on_event(ev); }
     bool overlay_open() override { return overlay_ && overlay_->is_open(); }
+    const std::uint32_t* overlay_image(unsigned vw, unsigned vh, bool& changed) override {
+#ifdef DREAMCOMP_WITH_FRONTEND
+        if (overlay_)
+            return overlay_->render_window(vw, vh, changed);
+#endif
+        (void)vw, (void)vh;
+        changed = false;
+        return nullptr;
+    }
+
     void draw_overlay(std::uint32_t* rgba, unsigned w, unsigned h, unsigned vw,
                       unsigned vh) override {
         if (overlay_)

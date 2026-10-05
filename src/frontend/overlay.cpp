@@ -278,6 +278,37 @@ struct Overlay::Impl {
         }
     }
 
+    const std::uint32_t* render_window(unsigned vw, unsigned vh, bool& changed) {
+        changed = false;
+        if (!open || !ready || failed || vw == 0 || vh == 0 || !pending_shot.empty())
+            return nullptr;
+        if (vw != vis_w || vh != vis_h || fw != vw || fh != vh || vis_x != 0 || vis_y != 0) {
+            fw = vw;
+            fh = vh;
+            vis_w = vw;
+            vis_h = vh;
+            vis_x = vis_y = 0;
+            context->SetDimensions(Rml::Vector2i(static_cast<int>(vw), static_cast<int>(vh)));
+            context->SetDensityIndependentPixelRatio(static_cast<float>(vh) / 720.0f);
+            need_render = true;
+        }
+        ui->tick();
+        const std::uint64_t now = SDL_GetTicks();
+        const std::uint64_t t0 = SDL_GetTicksNS();
+        if (ui->take_redraw() || need_render || now - last_render > 1000) {
+            context->Update();
+            soft->begin(vw, vh);
+            context->Render();
+            need_render = false;
+            last_render = now;
+            changed = true;
+            ++prof_renders;
+            prof_render_ns += SDL_GetTicksNS() - t0;
+        }
+        ++prof_frames;
+        return soft->pixels().data();
+    }
+
     // One scripted input every 150 ms: keys and pad buttons go into SDL's queue, so they take the
     // same path as real ones (engine poll -> event filter -> on_event).
     void step_script() {
@@ -384,6 +415,10 @@ bool Overlay::is_open() const {
 void Overlay::draw(std::uint32_t* rgba, unsigned w, unsigned h, unsigned view_w, unsigned view_h) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->draw(rgba, w, h, view_w, view_h);
+}
+const std::uint32_t* Overlay::render_window(unsigned view_w, unsigned view_h, bool& changed) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->render_window(view_w, view_h, changed);
 }
 void Overlay::on_vblank(std::uint64_t frame) {
     std::lock_guard<std::mutex> lock(impl_->mutex);

@@ -173,6 +173,11 @@ struct Live {
             error = presenter.error();
             return false;
         }
+        overlay_presenter.overlay_layer = true;  // dreamcomp: the in-game menu, blended on top
+        if (!overlay_presenter.create(window.context(), window.render_pass())) {
+            error = overlay_presenter.error();
+            return false;
+        }
         renderer.set_memory(memory_.vram(), dream::mem::DcMemory::kVramSize,
                             pvr_.reg_block() + 0x1000 / 4, palette_format());
         std::printf("window: %s, drawing at %ux%u\n", window.context().caps().device_name.c_str(),
@@ -361,8 +366,26 @@ struct Live {
         }
         // Direct present (dreamcomp): a rendered frame nothing needs on the host is sampled where it
         // is, on the GPU. Overlays drawn on the CPU and framebuffer write-back still take the copy.
+        // An overlay that can hand over a window-sized image is blended on the GPU (dreamcomp),
+        // so it does not force the frame back to the CPU.
+        const std::uint32_t* overlay_px = nullptr;
+        bool overlay_changed = false;
+        if (overlay_up) {
+            const VkExtent2D ext = window.extent();
+            for (auto* e : overlays)
+                if (e->overlay_open() &&
+                    (overlay_px = e->overlay_image(ext.width, ext.height, overlay_changed)))
+                    break;
+            if (overlay_px && (overlay_changed || overlay_w != ext.width ||
+                               overlay_h != ext.height)) {
+                overlay_w = ext.width;
+                overlay_h = ext.height;
+                overlay_dirty = true;
+            }
+        }
+        const bool cpu_overlay = overlay_up && !overlay_px;
         const bool direct =
-            from_renderer && !offscreen.readback && !show_fps && !menu.is_open() && !overlay_up;
+            from_renderer && !offscreen.readback && !show_fps && !menu.is_open() && !cpu_overlay;
         const std::uint32_t* source =
             direct ? nullptr : (from_renderer ? offscreen.pixels() : pixels.data());
         // Composited into the frame as it is handed to the GPU, so it costs no extra copy of the
@@ -371,7 +394,7 @@ struct Live {
         // another and usable as a reference image.
         if (direct) {
             // nothing to upload
-        } else if (overlay_up && source) {
+        } else if (cpu_overlay && source) {
             // dreamcomp: an extension overlay blends into the frame, which means reading it back.
             // The staging buffer `decorate` hands over is write-combined on some GPUs (reads cost
             // ~100x), so the overlay works on a cached host copy that is then uploaded as is.
@@ -398,6 +421,11 @@ struct Live {
                              });
         else
             presenter.upload(cmd, source, shown.width, shown.height);
+        // The overlay image goes up only when the menu redrew or the window changed size.
+        if (overlay_px && overlay_dirty) {
+            overlay_presenter.upload(cmd, overlay_px, overlay_w, overlay_h);
+            overlay_dirty = false;
+        }
         VkClearValue clears[2]{};
         clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clears[1].depthStencil = {0.0f, 0};
@@ -423,6 +451,8 @@ struct Live {
                                 window.extent());
         else
             presenter.draw(cmd, window.extent());
+        if (overlay_px)
+            overlay_presenter.draw(cmd, window.extent());
         vkCmdEndRenderPass(cmd);
         if (!window.end_frame(image))
             window.recreate_swapchain();
@@ -777,6 +807,9 @@ struct Live {
     double interp_ms = 0.0;
     std::chrono::steady_clock::time_point last_present{};
     dream::render::vk::Presenter presenter;
+    dream::render::vk::Presenter overlay_presenter;  // dreamcomp: the in-game menu layer
+    std::uint32_t overlay_w = 0, overlay_h = 0;
+    bool overlay_dirty = true;
     dream::render::DisplayList decoder;
     dream::render::vk::FrameGeometry geometry;
     dream::render::FramebufferInfo shown;

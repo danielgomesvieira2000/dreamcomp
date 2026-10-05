@@ -77,6 +77,10 @@ public:
     // shader averages them, so --scale finally produces the anti-aliasing it was already paying
     // for.
     bool smooth = false;
+    // An overlay layer (dreamcomp): set before create(). The image is premultiplied RGBA blended
+    // over what is already drawn, and it covers the target exactly (fit and display aspect from
+    // present_options() are ignored), so a UI rendered at the window's size lands 1:1.
+    bool overlay_layer = false;
 
     const std::string& error() const noexcept { return error_; }
 

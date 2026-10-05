@@ -18,6 +18,7 @@ layout(push_constant) uniform Push {
     vec2 offset;
     vec2 texel;  // one source texel in texture coordinates
     vec2 taps;   // source texels covered per output pixel, per axis; 1 when magnifying
+    vec2 mode;   // x: 1 keeps the texture's (premultiplied) alpha -- an overlay layer (dreamcomp)
 } push;
 
 layout(location = 0) in vec2 v_uv;
@@ -35,15 +36,17 @@ void main() {
     // one tap and get nothing.
     const ivec2 n = ivec2(clamp(ceil(push.taps - 0.05), vec2(1.0), vec2(float(kMaxTaps))));
     if (n.x == 1 && n.y == 1) {
-        colour = vec4(texture(image, v_uv).rgb, 1.0);
+        const vec4 t = texture(image, v_uv);
+        colour = push.mode.x > 0.5 ? t : vec4(t.rgb, 1.0);
         return;
     }
     // Taps are spread one source texel apart and centred on the output pixel, so the footprint is
     // the region that pixel actually covers rather than something offset to one side of it.
     const vec2 first = v_uv - 0.5 * (vec2(n) - 1.0) * push.texel;
-    vec3 sum = vec3(0.0);
+    vec4 sum = vec4(0.0);
     for (int y = 0; y < n.y; ++y)
         for (int x = 0; x < n.x; ++x)
-            sum += texture(image, first + vec2(float(x), float(y)) * push.texel).rgb;
-    colour = vec4(sum / float(n.x * n.y), 1.0);
+            sum += texture(image, first + vec2(float(x), float(y)) * push.texel);
+    sum /= float(n.x * n.y);
+    colour = push.mode.x > 0.5 ? sum : vec4(sum.rgb, 1.0);
 }

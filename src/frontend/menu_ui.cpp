@@ -484,8 +484,8 @@ std::string MenuUi::tab_general() {
     const auto fps = fps_choices();
     s += row_cycle("fps", "Frame rate", fps[choice_index(fps, draft_.get("fps", "auto"))].label,
                    "<b>Auto</b> blends an in-between frame between the game's frames on displays "
-                   "of 120 Hz or more. <b>120</b> always does. <b>60</b> shows only the game's own "
-                   "frames.<br/><br/>The game itself always runs at 60.",
+                   "of 120 Hz or more.<br/><b>120</b>: always blend.<br/><b>60</b>: only the "
+                   "game's own frames.<br/><br/>The game itself always runs at 60.",
                    false);
     s += row_button("r-about", "readme", "About", "Read me", kAboutText);
     return s;

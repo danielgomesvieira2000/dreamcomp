@@ -15,6 +15,7 @@ struct PushConstants {
     float offset[2];
     float texel[2];  // one source texel in texture coordinates
     float taps[2];   // source texels per output pixel, per axis; 1 or less when magnifying
+    float mode[2];   // x: 1 keeps the texture's alpha (overlay layer), 0 writes opaque
 };
 
 VkShaderModule make_module(VkDevice device, const std::uint32_t* code, std::size_t bytes) {
@@ -142,6 +143,15 @@ bool Presenter::create(Context& ctx, VkRenderPass render_pass) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    if (overlay_layer) {  // premultiplied "over"
+        blend.blendEnable = VK_TRUE;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.colorBlendOp = VK_BLEND_OP_ADD;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     VkPipelineColorBlendStateCreateInfo cb{};
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cb.attachmentCount = 1;
@@ -376,13 +386,16 @@ bool Presenter::draw_set(VkCommandBuffer cmd, VkDescriptorSet set, std::uint32_t
         return false;
     // Fit the guest's aspect ratio inside the window: shrink whichever axis has room to spare
     // (letterbox), grow the other one past the edges (crop), or neither (stretch).
-    const auto& opts = present_options();
+    PresentOptions layer_opts;
+    layer_opts.fit = PresentOptions::Fit::Stretch;
+    const auto& opts = overlay_layer ? layer_opts : present_options();
     const float image_aspect = opts.display_aspect > 0.0f
                                    ? opts.display_aspect
                                    : static_cast<float>(width_) / static_cast<float>(height_);
     const float target_aspect =
         static_cast<float>(target.width) / static_cast<float>(target.height);
-    PushConstants push{{1.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f}};
+    PushConstants push{{1.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f},
+                       {overlay_layer ? 1.0f : 0.0f, 0.0f}};
     switch (opts.fit) {
         case PresentOptions::Fit::Letterbox:
             if (target_aspect > image_aspect)

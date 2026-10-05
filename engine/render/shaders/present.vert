@@ -10,6 +10,7 @@ layout(push_constant) uniform Push {
     vec2 offset;
     vec2 texel;
     vec2 taps;
+    vec2 mode;
 } push;
 
 layout(location = 0) out vec2 v_uv;

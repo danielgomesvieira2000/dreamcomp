@@ -57,6 +57,10 @@ public:
     bool on_event(const void* sdl_event);  // true: the overlay used it (host_ext.h)
     bool is_open() const;
     void draw(std::uint32_t* rgba, unsigned w, unsigned h, unsigned view_w, unsigned view_h);
+    // The menu rendered at the window's own size (premultiplied RGBA), for the engine to blend
+    // over the game on the GPU. `changed`: it was redrawn since the last call. Null while closed
+    // (or while a test screenshot of the composited frame is pending: draw() takes that one).
+    const std::uint32_t* render_window(unsigned view_w, unsigned view_h, bool& changed);
     // Each vblank (test script: DREAMCOMP_OVERLAY_KEYS). on_event() is called from the window's
     // event poll and draw() from the present; they share a mutex, so they may run on different
     // threads.

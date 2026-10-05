@@ -65,6 +65,15 @@ public:
         return false;
     }
     virtual bool overlay_open() { return false; }
+    // The overlay as an image of the window's size (premultiplied RGBA, red in the low byte),
+    // blended over the game on the GPU: the game frame never has to come back to the CPU.
+    // `changed` says whether it differs from the last call, so it is uploaded only then.
+    // Returning null falls back to draw_overlay().
+    virtual const std::uint32_t* overlay_image(unsigned view_w, unsigned view_h, bool& changed) {
+        (void)view_w, (void)view_h;
+        changed = false;
+        return nullptr;
+    }
     virtual void draw_overlay(std::uint32_t* rgba, unsigned w, unsigned h, unsigned view_w,
                               unsigned view_h) {
         (void)rgba, (void)w, (void)h, (void)view_w, (void)view_h;
