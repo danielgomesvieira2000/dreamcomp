@@ -341,15 +341,31 @@ bool Presenter::upload(
 bool Presenter::draw(VkCommandBuffer cmd, VkExtent2D target) {
     if (!uploaded_ || !pipeline_ || target.width == 0 || target.height == 0)
         return false;
-    // Fit the guest's aspect ratio inside the window: shrink whichever axis has room to spare.
-    const float image_aspect = static_cast<float>(width_) / static_cast<float>(height_);
+    // Fit the guest's aspect ratio inside the window: shrink whichever axis has room to spare
+    // (letterbox), grow the other one past the edges (crop), or neither (stretch).
+    const auto& opts = present_options();
+    const float image_aspect = opts.display_aspect > 0.0f
+                                   ? opts.display_aspect
+                                   : static_cast<float>(width_) / static_cast<float>(height_);
     const float target_aspect =
         static_cast<float>(target.width) / static_cast<float>(target.height);
     PushConstants push{{1.0f, 1.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f}};
-    if (target_aspect > image_aspect)
-        push.scale[0] = image_aspect / target_aspect;
-    else
-        push.scale[1] = target_aspect / image_aspect;
+    switch (opts.fit) {
+        case PresentOptions::Fit::Letterbox:
+            if (target_aspect > image_aspect)
+                push.scale[0] = image_aspect / target_aspect;
+            else
+                push.scale[1] = target_aspect / image_aspect;
+            break;
+        case PresentOptions::Fit::Crop:
+            if (target_aspect > image_aspect)
+                push.scale[1] = target_aspect / image_aspect;
+            else
+                push.scale[0] = image_aspect / target_aspect;
+            break;
+        case PresentOptions::Fit::Stretch:
+            break;
+    }
 
     // How many source pixels each drawn pixel covers. --scale draws the guest's 640x480 at a
     // multiple of that and the window is usually smaller than the result, so this is normally

@@ -38,6 +38,12 @@ struct FunctionSpec {
     // Set by emit_unit's entry-mode inference when callers reach this function in different modes:
     // the bit is then tested at run time instead of assumed.
     bool entry_pr_unknown = false, entry_sz_unknown = false;
+    // [hooks] (dreamcomp): when non-empty, the function's wrapper calls
+    // `bool dream_hook_entry_<hook>(Ctx&, Memory&)` first (true = the hook replaced the function,
+    // skip the body) and/or `void dream_hook_exit_<hook>(Ctx&, Memory&)` after the body returns.
+    // The port defines them (dreamcomp/include/dreamcomp/hook.h has the macros).
+    std::string hook;
+    bool hook_entry = false, hook_exit = false;
 };
 
 struct EmitOptions {

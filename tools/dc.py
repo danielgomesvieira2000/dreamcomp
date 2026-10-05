@@ -250,6 +250,7 @@ def cmd_report(a) -> int:
     extra = ["--max-frames", str(a.frames), "--rtc-seed", "1000000", "--no-audio"]
     if a.press:
         extra += ["--press", a.press]
+    extra += a.extra
     return run(launcher_args(info, extra), cwd=info["dir"], check=False, env=dict(os.environ))
 
 
@@ -257,29 +258,29 @@ def cmd_shots(a) -> int:
     info = port_info(a.port)
     out = os.path.abspath(a.out or os.path.join(info["dir"], "shots"))
     os.makedirs(out, exist_ok=True)
-    frames = [int(x) for x in a.at.split(",")]
+    frames = sorted({int(x) for x in a.at.split(",")})
     made = []
-    for n in frames:
-        with tempfile.TemporaryDirectory() as tmp:
-            # --max-frames counts guest frames and --screenshot-at presented frames; the guest runs
-            # ahead of presentation, so leave headroom rather than stopping before the shot.
-            extra = ["--window", "--no-audio", "--unthrottled", "--present-mode", "immediate",
-                     "--rtc-seed", "1000000", "--screenshot-at", str(n),
-                     "--max-frames", str(int(n * 1.25) + 120), "--scale", str(a.scale)]
-            if a.press:
-                extra += ["--press", a.press]
-            run(launcher_args(info, extra), cwd=tmp, check=False, env=dict(os.environ))
-            shots = glob.glob(os.path.join(tmp, "screenshot-*.ppm"))
-            if not shots:
-                print(f"frame {n}: no screenshot (run ended first?)")
-                continue
+    with tempfile.TemporaryDirectory() as tmp:
+        # One run, every shot (--screenshot-at takes a list). --max-frames counts guest frames and
+        # --screenshot-at presented ones; the guest runs ahead of presentation, so leave headroom.
+        extra = ["--window", "--no-audio", "--unthrottled", "--present-mode", "immediate",
+                 "--rtc-seed", "1000000", "--screenshot-at", ",".join(map(str, frames)),
+                 "--max-frames", str(int(frames[-1] * 1.25) + 120), "--scale", str(a.scale)]
+        if a.press:
+            extra += ["--press", a.press]
+        extra += a.extra
+        run(launcher_args(info, extra), cwd=tmp, check=False, env=dict(os.environ))
+        shots = sorted(glob.glob(os.path.join(tmp, "screenshot-*.ppm")))
+        if len(shots) < len(frames):
+            print(f"only {len(shots)} of {len(frames)} screenshots (run ended first?)")
+        for n, src in zip(frames, shots):
             dst = os.path.join(out, f"frame_{n:05d}.png")
             try:
                 from PIL import Image
-                Image.open(shots[0]).save(dst)
+                Image.open(src).save(dst)
             except ImportError:
                 dst = dst[:-4] + ".ppm"
-                shutil.copy(shots[0], dst)
+                shutil.copy(src, dst)
             made.append((n, dst))
     try:
         from PIL import Image, ImageDraw
@@ -318,7 +319,14 @@ def main(argv=None) -> int:
     s = sub.add_parser("shots"); s.add_argument("port"); s.add_argument("--at", required=True)
     s.add_argument("--press"); s.add_argument("--out"); s.add_argument("--scale", type=int, default=1)
     s.set_defaults(fn=cmd_shots)
+    # Everything after a bare `--` goes to the launcher untouched (shots, report).
+    argv = list(sys.argv[1:] if argv is None else argv)
+    extra = []
+    if "--" in argv and argv[0] != "run":
+        cut = argv.index("--")
+        argv, extra = argv[:cut], argv[cut + 1:]
     a = ap.parse_args(argv)
+    a.extra = extra
     return a.fn(a)
 
 

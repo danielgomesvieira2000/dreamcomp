@@ -54,6 +54,12 @@ void Aica::store(std::uint32_t offset, std::uint32_t value, unsigned size) {
 
 void Aica::reg_write(std::uint32_t offset, std::uint32_t value, unsigned size) {
     offset &= 0x7FFFu;
+    // A 32-bit store writes the 16-bit register in the low half (Flycast does the same). The
+    // mixer's channel handlers only distinguish byte from halfword: before this, Soulcalibur's
+    // driver, which keys voices on with 32-bit STRs, wrote KYONEX into the register image without
+    // the key-on ever running -- a silent game (dreamcomp, 2026-10-05).
+    if (size == 4)
+        size = 2;
     const std::uint32_t slot = offset & ~3u;
     if (offset < 0x2000u) {  // 64 channels x 0x80 bytes
         ++channel_writes;

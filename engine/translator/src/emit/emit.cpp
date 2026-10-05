@@ -307,7 +307,12 @@ public:
                 bits |= 0x4u | (static_cast<std::uint32_t>(assumed.sz) << 3);
             out << "ReplayScope _replay(" << hexu(spec_.entry) << ", " << hexu(bits) << "); ";
         }
-        out << name << "__resume(c, m, 0); }\n";
+        if (!spec_.hook.empty() && spec_.hook_entry)
+            out << "if (dream_hook_entry_" << spec_.hook << "(c, m)) return; ";
+        out << name << "__resume(c, m, 0); ";
+        if (!spec_.hook.empty() && spec_.hook_exit)
+            out << "dream_hook_exit_" << spec_.hook << "(c, m); ";
+        out << "}\n";
         // After the body, so every literal the lowering read has been recorded and a pool is not
         // mistaken for code that went missing.
         report_coverage();
@@ -1679,6 +1684,11 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
         src << "void " << f.name << "(Ctx& c, Memory& m);\n";
         src << "static void " << f.name
             << "__resume(Ctx& c, Memory& m, std::uint32_t resume_pc);\n";
+        // [hooks]: defined by the port; a missing definition is a link error, never a silent no-op.
+        if (!f.hook.empty() && f.hook_entry)
+            src << "bool dream_hook_entry_" << f.hook << "(Ctx& c, Memory& m);\n";
+        if (!f.hook.empty() && f.hook_exit)
+            src << "void dream_hook_exit_" << f.hook << "(Ctx& c, Memory& m);\n";
     }
     src << "\n";
     // Pass 0: pool words the unit itself writes (run-time patched literals) are never folded.

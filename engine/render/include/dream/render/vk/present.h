@@ -21,6 +21,25 @@
 
 namespace dream::render::vk {
 
+// How the guest picture fills the window (dreamcomp addition). Process-wide so a launcher
+// extension can change it between frames without reaching into the window.
+struct PresentOptions {
+    enum class Fit : std::uint8_t {
+        Letterbox,  // whole picture visible, bars where the shapes differ (the engine's default)
+        Crop,       // fill the window, cutting what overflows (no bars)
+        Stretch,    // fill the window, distorting the shape
+    };
+    Fit fit = Fit::Letterbox;
+    // Shape the picture is shown at; 0 means its own (640x480 -> 4:3). An anamorphic widescreen
+    // mode renders a 16:9 view into the 4:3 framebuffer and sets 16/9 here to undo the squeeze.
+    float display_aspect = 0.0f;
+};
+
+inline PresentOptions& present_options() {
+    static PresentOptions o;
+    return o;
+}
+
 class Presenter {
 public:
     Presenter() = default;

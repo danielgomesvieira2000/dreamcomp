@@ -63,3 +63,4 @@ CLAUDE.local.md
 
 # Third-party binaries fetched by tools/dc.py deps
 /.deps/
+.clangd

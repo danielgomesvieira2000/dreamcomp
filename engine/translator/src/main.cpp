@@ -406,6 +406,45 @@ int translate_view(const dream::translator::GameConfig& cfg, const dream::transl
     std::size_t named = 0;
     if (syms)
         named = dream::translator::apply_symbols(*syms, fns);
+    // [hooks] (dreamcomp): "name" hooks entry and exit, "name@entry" / "name@exit" one side. Only
+    // the main image view carries hooks; an address that is not a function entry here is fatal,
+    // because a hook that silently never fires is the worst outcome.
+    if (!opt.overlay && stem.find("_reloc_") == std::string::npos) {
+        for (const auto& [addr, spec] : cfg.hooks) {
+            const std::uint32_t at = to_link_space(cfg, addr);
+            std::string name = spec;
+            bool entry = true, exit = true;
+            if (const auto pos = spec.find('@'); pos != std::string::npos) {
+                name = spec.substr(0, pos);
+                const std::string side = spec.substr(pos + 1);
+                entry = side == "entry";
+                exit = side == "exit";
+                if (!entry && !exit) {
+                    std::fprintf(stderr, "[hooks] 0x%08x: \"%s\": side must be @entry or @exit\n",
+                                 addr, spec.c_str());
+                    return 2;
+                }
+            }
+            bool found = false;
+            for (auto& f : fns) {
+                if (f.entry != at)
+                    continue;
+                f.hook = name;
+                f.hook_entry = entry;
+                f.hook_exit = exit;
+                found = true;
+            }
+            if (!found) {
+                std::fprintf(stderr,
+                             "[hooks] 0x%08x (%s): not the entry of any discovered function; "
+                             "seed it in [functions] extra or fix the address\n",
+                             addr, name.c_str());
+                return 2;
+            }
+            std::printf("hook %s on 0x%08x (%s%s%s)\n", name.c_str(), at, entry ? "entry" : "",
+                        entry && exit ? "+" : "", exit ? "exit" : "");
+        }
+    }
     if (opt.overlay) {
         // Several overlay units can translate the same address: keep their symbols distinct.
         const auto pos = stem.find("_reloc_");

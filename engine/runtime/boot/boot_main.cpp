@@ -18,6 +18,7 @@
 #include <ctime>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "dream/runtime/aica/rtc.h"
 #include "dream/runtime/gdrom/disc.h"
 #include "dream/runtime/sha1.h"
+#include "dream/runtime/host_ext.h"
 #include "dream/runtime/hle/bios.h"
 #include "dream/runtime/holly/g2dma.h"
 #include "dream/runtime/holly/sysblock.h"
@@ -315,7 +317,7 @@ struct Live {
             screenshot();
         if (window.pressed(dream::render::vk::Control::Capture))
             capture();
-        if (screenshot_at && presented == screenshot_at)
+        if (screenshot_at.count(presented))
             screenshot();
         if (capture_at && presented == capture_at)
             capture();
@@ -652,7 +654,8 @@ struct Live {
     // --screenshot-at N / --capture-at N: the same thing F12 and F11 do, at the Nth presented
     // frame, for a run with nobody at the keyboard. These were environment variables, which is
     // fine for a one-off and wrong for something the documentation tells people to use.
-    std::uint64_t screenshot_at = 0, capture_at = 0;
+    std::set<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...] (list: dreamcomp)
+    std::uint64_t capture_at = 0;
     std::chrono::steady_clock::time_point fps_mark{};
     std::uint64_t fps_frames_at_mark = 0;
     double fps_guest_at_mark = 0;
@@ -1106,7 +1109,7 @@ void usage(const char* argv0, std::FILE* out) {
         "  --dump-vram FILE       video memory and the PVR registers from the same instant\n"
         "  --dump-aram FILE       the 2 MB of sound RAM at the stop\n"
         "  --dump FILE            a memory range at the stop\n"
-        "  --screenshot-at N      write a screenshot at the Nth presented frame (F12 by hand)\n"
+        "  --screenshot-at N[,N]  write a screenshot at each listed presented frame (F12)\n"
         "  --capture-at N         write a full frame capture at the Nth (F11 by hand)\n"
         "  --wav FILE             record the audio as 16-bit stereo 44.1 kHz\n"
         "  --sample N             sample the CPU every N cycles (--sample-file FILE)\n"
@@ -1125,9 +1128,22 @@ void usage(const char* argv0, std::FILE* out) {
         "  --validation           turn on Vulkan validation layers\n"
         "  --framebuffer-writeback  write rendered frames back into video memory\n",
         argv0);
+    for (auto* e : dream::host::extensions()) e->usage(out);
 }
 
 int main(int argc, char** argv) {
+    // Extensions may rewrite the command line before it is parsed (host_ext.h). The rewritten
+    // strings must outlive every pointer taken into them below, hence the statics.
+    static std::vector<std::string> ext_args;
+    static std::vector<char*> ext_argv;
+    if (!dream::host::extensions().empty()) {
+        ext_args.assign(argv, argv + argc);
+        for (auto* e : dream::host::extensions()) e->adjust_args(ext_args);
+        for (auto& a : ext_args) ext_argv.push_back(a.data());
+        ext_argv.push_back(nullptr);
+        argc = static_cast<int>(ext_args.size());
+        argv = ext_argv.data();
+    }
     std::string config, report, sample_file, dump;
     bool stop_on_ta = false;
     // No limit unless one is asked for. A run that stops on its own after a number of frames
@@ -1184,7 +1200,8 @@ int main(int argc, char** argv) {
     bool start_with_fps = false;
     // --suggest-config FILE: the TOML this run earned, ready to paste into the game's config.
     std::string suggest_config;
-    std::uint64_t screenshot_at = 0, capture_at = 0;
+    std::set<std::uint64_t> screenshot_at;  // --screenshot-at N[,N...] (list: dreamcomp)
+    std::uint64_t capture_at = 0;
     unsigned scale = 1;
     // --rtc-seed N: a fixed console clock, so two runs of the same build do the same thing and can
     // be compared. Any non-zero value will do; the number itself only changes the date a title
@@ -1288,7 +1305,14 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--suggest-config") && i + 1 < argc)
             suggest_config = argv[++i];
         else if (!std::strcmp(argv[i], "--screenshot-at") && i + 1 < argc)
-            screenshot_at = std::strtoull(argv[++i], nullptr, 0);
+            for (const char* p = argv[++i]; *p;) {
+                char* end = nullptr;
+                const std::uint64_t n = std::strtoull(p, &end, 0);
+                if (end == p)
+                    break;
+                screenshot_at.insert(n);
+                p = (*end == ',') ? end + 1 : end;
+            }
         else if (!std::strcmp(argv[i], "--capture-at") && i + 1 < argc)
             capture_at = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--rtc-seed") && i + 1 < argc)
@@ -1320,6 +1344,14 @@ int main(int argc, char** argv) {
             usage(argv[0], stdout);
             return 0;
         } else {
+            int used = 0;
+            for (auto* e : dream::host::extensions())
+                if ((used = e->parse_arg(i, argc, argv)) > 0)
+                    break;
+            if (used > 0) {
+                i += used - 1;
+                continue;
+            }
             std::fprintf(stderr, "unknown option: %s\n\n", argv[i]);
             usage(argv[0], stderr);
             return 2;
@@ -1607,6 +1639,7 @@ int main(int argc, char** argv) {
         }
     }
     sys.spg.on_vblank_out = [&] {
+        for (auto* e : dream::host::extensions()) e->on_vblank(sys);
         if (!scripted.empty()) {
             const std::uint64_t f = sys.spg.frames();
             std::uint16_t held = 0;
@@ -1943,6 +1976,7 @@ int main(int argc, char** argv) {
     }
     const char* stop = "returned from the entry function";
     int rc = 0;
+    for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     try {
 #ifdef DREAM_DEV_INTERPRETER
@@ -1987,6 +2021,7 @@ int main(int argc, char** argv) {
                      static_cast<void*>(dream::sh4::hooks()), static_cast<void*>(&sys));
         rc = 1;
     }
+    for (auto* e : dream::host::extensions()) e->on_stop(sys, stop);
     const double host_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 #ifdef DREAM_DEV_INTERPRETER

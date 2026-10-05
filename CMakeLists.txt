@@ -26,3 +26,14 @@ endif()
 
 add_subdirectory(engine)
 include(cmake/DreamcompPort.cmake)
+
+# The dreamcomp layer linked into every port executable. An OBJECT library, because its
+# extensions register themselves from static constructors that a static library would drop.
+add_library(dreamcomp_core OBJECT src/core.cpp src/settings.cpp)
+target_include_directories(dreamcomp_core PUBLIC ${DREAMCOMP_ROOT}/include)
+target_link_libraries(dreamcomp_core PUBLIC dream::runtime)
+target_compile_features(dreamcomp_core PUBLIC cxx_std_20)
+if(TARGET dream_render_vk)
+  target_link_libraries(dreamcomp_core PUBLIC dream::render_vk)
+  target_compile_definitions(dreamcomp_core PRIVATE DREAM_WITH_RENDERER)
+endif()
