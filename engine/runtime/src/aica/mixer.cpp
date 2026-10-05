@@ -322,7 +322,9 @@ struct Mixer::Channel {
             (void)ca;
         } else {
             u32 next_addr = ca + 1;
-            if (next_addr >= loop.LEA && loop.LEA > loop.LSA)
+            // ADPCM long-stream mode ends on a 4-sample boundary (Flycast's alignedLEA).
+            const u32 lea = PCMS == kAdpcmStream ? ((loop.LEA + 3) & ~3u) : loop.LEA;
+            if (next_addr >= lea && lea > loop.LSA)
                 next_addr = loop.LSA;
             // `switch (PCMS)` on a template constant leaves every other arm as dead code, which
             // MSVC rejects under /W4 /WX; `if constexpr` says the same thing and compiles only the
@@ -385,17 +387,16 @@ struct Mixer::Channel {
         while (sp.p.ip > 0) {
             sp.p.ip--;
             u32 ca = CA + 1;
-            u32 ca_t = ca;
-            if constexpr (PCMS == kAdpcmStream)
-                ca_t &= ~3u;  // LEA/LSA are meant to be 4-sample aligned in stream mode
+            // LEA/LSA are meant to be 4-sample aligned in stream mode: the end is the aligned LEA.
+            const u32 lea = PCMS == kAdpcmStream ? ((loop.LEA + 3) & ~3u) : loop.LEA;
             if constexpr (LPSLNK) {
                 if (AEG.state == kAttack && ca >= loop.LSA)
                     set_aeg_state(kDecay1);
             }
-            if (ca_t >= loop.LEA) {
-                if (loop.LSA > loop.LEA) {
+            if (ca >= lea) {
+                if (loop.LSA > lea) {
                     // LSA > LEA: play on until LSA, then reset CA and stop, looping or not.
-                    if (ca_t >= loop.LSA) {
+                    if (ca >= loop.LSA) {
                         loop.looped = 1;
                         ca = 0;
                         disable();

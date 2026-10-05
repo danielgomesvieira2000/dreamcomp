@@ -79,6 +79,13 @@ void Aica::reg_write(std::uint32_t offset, std::uint32_t value, unsigned size) {
         mixer.ring_buffer_written();
         return;
     }
+    // The interrupt and timer registers act only on a write to their own address (the low byte or
+    // the whole halfword); a byte store to the high byte is just stored, as in Flycast. Before,
+    // a byte write to SCIEB+1 cleared the timer enables and enabled nothing.
+    if (offset != slot && slot != kArmRst) {
+        store(offset, value, size);
+        return;
+    }
     switch (slot) {
         case kScieb:
             set16(kScieb, value & kIntMask);
