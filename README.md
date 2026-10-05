@@ -15,10 +15,11 @@ from a disc is ever committed (see [docs/LEGAL.md](docs/LEGAL.md)).
 
 | Port | Repository | State |
 |---|---|---|
-| Soulcalibur (USA, T1401N) | `soulcalibur-recomp` | Boots to menus and fights with music and effects; 0 untranslated call targets in 30 s of play. Anamorphic widescreen prototyped but crashes during gameplay (under investigation). |
+| Soulcalibur (USA, T1401N) | `soulcalibur-recomp` | Plays: intro, menus, arcade fights with correct graphics, music and effects, memory-card saves and loads. 4x real time on an Intel Iris Xe at 2x internal resolution (headroom for real-time play). Widescreen 16:9 / 21:9 / 32:9 at full resolution (HUD stretched). Players 1-4 on separate pads, rumble. Texture packs, file mods. 8 minutes of scripted play per seed with no faults. |
 
-Platforms: Windows x64 is built and tested (clang-cl, Vulkan, Intel Iris Xe). Linux and macOS
-build in the engine's CI; Android is planned (docs/ROADMAP.md).
+Platforms: Windows x64 is built and tested (clang-cl, Vulkan, Intel Iris Xe). Linux compiles
+(g++ 15, headless verified); macOS is the engine's own development platform; Android is planned
+(docs/PLATFORMS.md).
 
 ## How it fits together
 
