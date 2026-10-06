@@ -200,9 +200,23 @@ float g_aspect_now = 4.0f / 3.0f;
 
 float target_aspect() { return g_aspect_now; }
 
+// `--aspect W:H` wider than 4:3 on the command line: that fixed shape for this run, whatever the
+// window's (headless shots and tests at 21:9 without a 21:9 screen). 0: follow the window. Not a
+// setting: the saved `aspect` keeps meaning original / expanded.
+float g_fixed_aspect = 0.0f;
+
+float parse_ratio(const std::string& s) {
+    float w = 0.0f, h = 0.0f;
+    if (std::sscanf(s.c_str(), "%f:%f", &w, &h) == 2 && w > 0.0f && h > 0.0f)
+        return w / h;
+    return 0.0f;
+}
+
 // The shape Expanded asks for from a window of `window_aspect` (0: not known yet).
 float expanded_target(float window_aspect) {
-    const float a = window_aspect > 0.0f ? window_aspect : 16.0f / 9.0f;
+    const float a = g_fixed_aspect > 0.0f ? g_fixed_aspect
+                    : window_aspect > 0.0f ? window_aspect
+                                           : 16.0f / 9.0f;
     return std::clamp(a, 4.0f / 3.0f, g_port ? g_port->max_aspect : 4.0f / 3.0f);
 }
 
@@ -278,8 +292,11 @@ public:
                 g_settings.set("aspect", "16:9");
             else if (args[i] == "--no-widescreen")
                 g_settings.set("aspect", "4:3");
-            else if (args[i] == "--aspect" && i + 1 < args.size())
+            else if (args[i] == "--aspect" && i + 1 < args.size()) {
                 g_settings.set("aspect", args[i + 1]);
+                const float r = parse_ratio(args[i + 1]);
+                g_fixed_aspect = r > 4.0f / 3.0f + 0.01f ? r : 0.0f;
+            }
         }
         add_texture_flags(args, g_settings.file().parent_path());
         add_input_and_mod_flags(args, g_settings.file().parent_path());
@@ -424,7 +441,9 @@ public:
         std::fprintf(out,
                      "\ndreamcomp:\n"
                      "  --aspect W:H           4:3 (original), 16:9, 21:9 or 32:9: a wider view, not\n"
-                     "                         a stretch (ports with widescreen support)\n"
+                     "                         a stretch (ports with widescreen support), fixed for\n"
+                     "                         this run (clamped to the port's maximum); `expanded`\n"
+                     "                         follows the window\n"
                      "  --widescreen / --no-widescreen  shorthand for --aspect 16:9 / 4:3\n"
                      "  --fit MODE             letterbox, crop or stretch (default crop: no bars)\n"
                      "  --set KEY=VALUE        override one setting for this run\n"

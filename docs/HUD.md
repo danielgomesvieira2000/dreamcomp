@@ -74,8 +74,17 @@ toward the centre (still reaching both edges).
 - dreamcomp: `Core::on_frame` (`src/core.cpp`) applies `PortInfo::hud`. Transform:
   `x' = 320 + (x - 320) * (4/3) / aspect` in guest space, before the anamorphic render target
   stretches it back.
-- Per game: measure with `--capture-at N` and `dreamcomp_ta_dump capture.ta`, look at sprite
-  depths in the HUD's screen region, then set the rule's fields in the port's `PortInfo`.
+- Per game: measure with `--capture-at N` (or `scenario.py ... -- --dump-ta F --dump-ta-at-frame
+  N`) and `dreamcomp_ta_dump capture.ta`, look at the depths of flat pieces in the HUD's screen
+  region, then set the rule's fields in the port's `PortInfo`. First check the summary line:
+  `sprites 0` means the HUD is polygons and needs `polygons = true` (Jet Grind Radio).
+- Verify at a shape where a miss is obvious: `-- --aspect 21:9` (fixed shape for the run, headless
+  shots included) and compare an element's width against the 4:3 shot; uncorrected it is 1.75x.
+
+| Game | Rule | Overrides shipped |
+|---|---|---|
+| Soulcalibur | sprites + `polygons`, `overlay_z 1.0`, backdrop cover | none |
+| Jet Grind Radio | `polygons`, `overlay_z 1.05` (HUD at 1/w 1.11-6.67, 3D below 0.05) | boot notice fade (full-screen render-to-texture quad) |
 
 ## Limits and next step
 
