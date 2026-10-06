@@ -145,6 +145,16 @@ struct Pacing {
         float render_ms, decode_ms;
     };
     std::vector<Late> late_frames;
+    // Input age (dreamcomp): from reading the pads to presenting the frame the guest ran with them.
+    std::vector<float> input_age_ms;
+    std::chrono::steady_clock::time_point input_read{};
+    void pads_read() { input_read = std::chrono::steady_clock::now(); }
+    void presenting() {
+        if (input_read.time_since_epoch().count() != 0 && input_age_ms.size() < 2'000'000)
+            input_age_ms.push_back(std::chrono::duration<float, std::milli>(
+                                       std::chrono::steady_clock::now() - input_read)
+                                       .count());
+    }
     std::uint64_t last_textures = 0, last_pipelines = 0, last_render_ns = 0, last_decode_ns = 0;
     void vblank(std::uint64_t frame, std::uint64_t textures, std::uint64_t pipelines,
                 std::uint64_t render_ns, std::uint64_t decode_ns) {
@@ -191,6 +201,16 @@ struct Pacing {
                     v.size(), sum / static_cast<double>(v.size()), pct(0.5), pct(0.95), pct(0.99),
                     v.back(), late, very_late, sleeps ? overshoot_ms_sum / static_cast<double>(sleeps) : 0.0,
                     overshoot_ms_max, static_cast<unsigned long long>(sleeps));
+        if (input_age_ms.size() >= 10) {
+            std::vector<float> a = input_age_ms;
+            std::sort(a.begin(), a.end());
+            double asum = 0;
+            for (float x : a) asum += x;
+            std::printf("pacing: input age at present (pads read -> frame presented): mean %.2f ms, "
+                        "p50 %.2f p95 %.2f max %.1f ms\n",
+                        asum / static_cast<double>(a.size()), a[a.size() / 2],
+                        a[static_cast<std::size_t>(0.95 * (a.size() - 1))], a.back());
+        }
         if (!late_frames.empty()) {
             std::printf("pacing: late frames (guest frame: ms, textures decoded, pipelines made, "
                         "render ms, of which texture decode ms):");
@@ -440,11 +460,24 @@ struct Live {
             renderer.textures().invalidate_range(target.address, target.address + bytes);
     }
 
+    // Window events and pad state, once per frame (dreamcomp). The vblank hook calls this after
+    // its pacing sleep, just before the guest's pads are read, so the input the game sees is
+    // sampled right before it runs the frame rather than a whole sleep earlier; present() then
+    // works on that same poll (its hotkeys are edges computed per poll, so a second poll would
+    // lose them). Returns false when the user has closed the window.
+    bool poll_input() {
+        input_polled = true;
+        return window_open = window.poll();
+    }
+
     // Vertical blank: show what the video hardware would be scanning out, and read the keyboard.
     // Returns false when the user has closed the window.
     bool present(std::uint64_t frame, std::uint64_t guest_cycles) {
         guest_frame = frame;
-        if (!window.poll())
+        if (!input_polled)
+            poll_input();
+        input_polled = false;
+        if (!window_open)
             return false;
         retarget();
         update_counter(guest_cycles);
@@ -984,6 +1017,7 @@ struct Live {
     // looks (frames actually presented per second of wall clock) and whether it is keeping up
     // (guest time elapsed per second of wall clock, where 1.00x is the console's own pace).
     bool show_fps = false;
+    bool input_polled = false, window_open = true;  // poll_input() (dreamcomp)
     // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
     // nobody rebinds a control mid-corner.
     dream::render::InputMenu menu;
@@ -2247,6 +2281,7 @@ int main(int argc, char** argv) {
                                  paused_for = std::chrono::steady_clock::duration::zero()]() mutable {
             if (previous_vblank)
                 previous_vblank();
+            live->pacing.presenting();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
                 throw StopRun{"the window was closed"};
             // The binding screen stops the guest rather than drawing over a running one: nobody
@@ -2264,15 +2299,26 @@ int main(int argc, char** argv) {
                 }
                 paused_for += std::chrono::steady_clock::now() - paused_at;
             }
-            // Scripted presses win while they are held, so --press still works with a window open.
-            if (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu)
-                live->read_controls(pad_ptr->state, 0);
-            sync_ports(live->window.players());
-            for (unsigned port = 1; port < port_pads.size(); ++port)
-                if (port_pads[port])
-                    live->read_controls(port_pads[port]->state, port);
-            if (unthrottled)
+            // Pads are read after the pacing sleep (dreamcomp), right before the guest runs the
+            // frame that uses them: read before the sleep, the input was a sleep older (about
+            // 10 ms at scale 2) by the time the game saw it.
+            auto read_pads = [&] {
+                if (!live->poll_input())
+                    throw StopRun{"the window was closed"};
+                // Scripted presses win while they are held, so --press still works with a window
+                // open.
+                if (scripted.empty() || pad_ptr->state.buttons == 0xFFFFu)
+                    live->read_controls(pad_ptr->state, 0);
+                sync_ports(live->window.players());
+                for (unsigned port = 1; port < port_pads.size(); ++port)
+                    if (port_pads[port])
+                        live->read_controls(port_pads[port]->state, port);
+                live->pacing.pads_read();
+            };
+            if (unthrottled) {
+                read_pads();
                 return;
+            }
             const auto guest =
                 std::chrono::duration<double>(static_cast<double>(sys.ctx.cycles) / 200e6);
             const auto target =
@@ -2283,6 +2329,7 @@ int main(int argc, char** argv) {
                 std::this_thread::sleep_for(target - now);
                 live->pacing.slept(target);
             }
+            read_pads();
             live->pacing.vblank(sys.spg.frames(), live->renderer.textures().decoded,
                                 live->renderer.pipelines, g_render_ns,
                                 live->renderer.textures().decode_ns);
