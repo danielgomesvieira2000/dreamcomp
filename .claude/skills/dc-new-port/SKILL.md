@@ -49,6 +49,20 @@ Paste suggestions into `game/<id>.toml` with a comment saying how each was found
 when `untranslated call targets: 0`, `unmapped memory accesses: 0` across menus **and** gameplay
 (use `--press` scripts to get there). Then `dc.py shots` and look at the sheet.
 
+Add the port's scenarios to `tools/scenario.py` (`PORT_SCENARIOS[<id>]`: boot, play, attract) so
+every later check is one command.
+
+## 3b. First pass after gameplay (each is a known win or trap)
+
+| Step | How | Source |
+|---|---|---|
+| Profile | `scenario.py play --port <id> --speed real -- --profile p.prof`; `tools/profile.py p.prof` | docs/TOOLS.md |
+| Frame-wait idle skip | a guest function with high self time calling `call_indirect` + a tiny `fn_`: the Ninja vsync wait; `dreamcomp::IdleWait` hook, verify bit-identical | docs/HOOKS.md "Idle skip", playbook T16 |
+| Widescreen + HUD | Flycast cheat value -> `PortInfo::widescreen`; `ta_dump` the HUD: `sprites 0` means `hud.polygons`; check at `-- --aspect 21:9` by element width | docs/HUD.md, T17 |
+| Upscaled 2D | text at the default scale: frames around glyphs = T18 (`sharp_2d` handles it) | T18 |
+| Translated vs interpreted | one late frame with `-- --interpret --dump-ta F --dump-ta-at-frame N` against the translated run: `cmp` the two `.ta` files | dc-investigate §4 |
+| Quit Game | scripted quit on both presenters (dc-playtest release checks) | docs/FRONTEND.md |
+
 ## 4. Record
 
 Facts about the game -> `docs/GAME-INTERNALS.md`; toolchain facts -> `docs/PORTING.md`; same commit.

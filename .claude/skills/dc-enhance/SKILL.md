@@ -20,7 +20,10 @@ Copy mechanisms literally between ports; **re-measure findings** on each game.
 - **Widescreen, anamorphic** (`PortInfo::widescreen`): one projection value the game recomputes
   (Flycast `core/cheats.cpp` table by product number). Re-assert each vblank; prefer an `@exit`
   hook on the function that computes it once found. Presenter shows 16:9 (`widescreen_aspect`).
-  Known cost: HUD stretched -> fix with hooks on the 2D path.
+  HUD: `PortInfo::hud` rule (docs/HUD.md); `ta_dump` summary `sprites 0` -> `hud.polygons` with an
+  `overlay_z` under the HUD's 1/w (T17); per-element fixes in `game/hud_overrides.ini` (F1 editor,
+  /dc-hud). Verify at `-- --aspect 21:9` by an element's width against 4:3, then raise
+  `max_aspect` only after checking that shape (32:9 for Jet Grind Radio).
 - **Widescreen, Hor+**: widen the game's viewport/clip values in an exit hook so culling widens
   too (engine `docs/widescreen-crazytaxi-study.md` is the worked method).
 - **Internal resolution**: engine `--scale`, setting `scale`.
