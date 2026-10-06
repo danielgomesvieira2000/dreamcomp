@@ -892,6 +892,54 @@ void Mixer::ring_buffer_written() {
     dsp_.RBP = (common->RBP * 2048u) & kAramMask;
 }
 
+std::uint32_t Mixer::dsp_state_read(std::uint32_t addr, unsigned size) const {
+    u32 v;
+    if (addr < 0x4500) {
+        v = static_cast<u32>(addr < 0x4400 ? dsp_.TEMP[(addr - 0x4000) / 8]
+                                           : dsp_.MEMS[(addr - 0x4400) / 8]);
+        v = (addr & 4) ? (v >> 8) & 0xFFFFu : v & 0xFFu;
+    } else {
+        v = static_cast<u32>(dsp_.MIXS[(addr - 0x4500) / 8]);
+        v = (addr & 4) ? (v >> 4) & 0xFFFFu : v & 0xFu;
+    }
+    if (size == 1)
+        v = (addr & 1) ? v >> 8 : v & 0xFFu;
+    return v;
+}
+
+void Mixer::dsp_state_write(std::uint32_t addr, std::uint32_t data, unsigned size) {
+    ++dsp_state_writes;
+    if (addr < 0x4500) {
+        s32& v = addr < 0x4400 ? dsp_.TEMP[(addr - 0x4000) / 8] : dsp_.MEMS[(addr - 0x4400) / 8];
+        if (addr & 4) {
+            if (size == 1) {
+                if (addr & 1)
+                    v = (v & 0x0000FFFF) | ((static_cast<s32>(data << 24)) >> 8);
+                else
+                    v = static_cast<s32>((static_cast<u32>(v) & 0xFFFF00FFu) | ((data & 0xFFu) << 8));
+            } else {
+                v = (v & 0xFF) | ((static_cast<s32>(data << 16)) >> 8);
+            }
+        } else if (size != 1 || (addr & 1) == 0) {
+            v = static_cast<s32>((static_cast<u32>(v) & ~0xFFu) | (data & 0xFFu));
+        }
+    } else {
+        s32& v = dsp_.MIXS[(addr - 0x4500) / 8];
+        if (addr & 4) {
+            if (size == 1) {
+                if (addr & 1)
+                    v = (v & 0x00000FFF) | ((static_cast<s32>(data << 24)) >> 12);
+                else
+                    v = static_cast<s32>((static_cast<u32>(v) & 0xFFFFF00Fu) | ((data & 0xFFu) << 4));
+            } else {
+                v = (v & 0xF) | ((static_cast<s32>(data << 16)) >> 12);
+            }
+        } else if (size != 1 || (addr & 1) == 0) {
+            v = static_cast<s32>((static_cast<u32>(v) & ~0xFu) | (data & 0xFu));
+        }
+    }
+}
+
 void Mixer::dsp_program_written() {
     dsp_.dirty = true;
 }

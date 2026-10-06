@@ -38,6 +38,8 @@ std::uint32_t Aica::reg_read(std::uint32_t offset, unsigned size) {
     offset &= 0x7FFFu;
     if (offset >= 0x2808u && offset < 0x2818u)
         mixer.common_reg_read(offset, size == 1);
+    if (offset >= 0x4000u && offset < 0x4580u)  // the DSP's work registers (Flycast aica_mem.cpp)
+        return (offset & 2) ? 0u : mixer.dsp_state_read(offset, size);
     if (size == 1)
         return regs_[offset];
     const std::uint32_t o = offset & ~1u;
@@ -68,6 +70,14 @@ void Aica::reg_write(std::uint32_t offset, std::uint32_t value, unsigned size) {
         return;
     }
     if (offset >= 0x3000u) {  // DSP coefficients, programme and data
+        // As Flycast: writes to the upper halfword of a DSP register slot are dropped, and the
+        // TEMP/MEMS/MIXS window goes to the DSP's own state, not the register image.
+        if (offset & 2u)
+            return;
+        if (offset >= 0x4000u && offset < 0x4580u) {
+            mixer.dsp_state_write(offset, value, size);
+            return;
+        }
         ++dsp_writes;
         store(offset, value, size);
         if (offset >= 0x3400u && offset < 0x3C00u)

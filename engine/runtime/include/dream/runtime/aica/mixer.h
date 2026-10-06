@@ -29,6 +29,11 @@ public:
     // RBP/RBL (0x2804) changed; DSP programme memory (0x3400..0x3BFF) changed.
     void ring_buffer_written();
     void dsp_program_written();
+    // The DSP's work registers as the CPUs see them at 0x4000-0x457F (TEMP, MEMS, MIXS: a low
+    // byte word and a high 16-bit word each), mapped as Flycast's aica_mem.cpp does (dreamcomp).
+    std::uint32_t dsp_state_read(std::uint32_t offset, unsigned size) const;
+    void dsp_state_write(std::uint32_t offset, std::uint32_t value, unsigned size);
+    std::uint64_t dsp_state_writes = 0;
     // Refreshes the monitor registers (MIBUF at 0x2808, EG/SGC/LP at 0x2810, CA at 0x2814) before
     // a read of `offset` (0x2808..0x2817).
     void common_reg_read(unsigned offset, bool byte);

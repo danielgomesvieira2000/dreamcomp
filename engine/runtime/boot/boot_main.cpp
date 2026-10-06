@@ -1124,7 +1124,7 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
         buf, sizeof buf,
         "AICA: arm7 %s at pc 0x%08x, %llu samples, %llu ARM instructions, %llu FIQs, "
         "%llu SWIs, %llu undefined, %llu timer irqs, %llu SH-4 irq raises, %llu channel "
-        "writes, %llu dsp writes; mixer: %llu key-ons, %u channels active, %llu of %llu "
+        "writes, %llu dsp writes (%llu to its work registers); mixer: %llu key-ons, %u channels active, %llu of %llu "
         "samples non-zero, dsp %s; SCPU sh4->arm %llu, arm->sh4 %llu; reg writes sh4 %llu "
         "arm %llu\n",
         aica.arm.enabled() ? "running" : "held", aica.arm.next_pc(),
@@ -1137,6 +1137,7 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
         static_cast<unsigned long long>(aica.sh4_irq_raises),
         static_cast<unsigned long long>(aica.channel_writes),
         static_cast<unsigned long long>(aica.dsp_writes),
+        static_cast<unsigned long long>(aica.mixer.dsp_state_writes),
         static_cast<unsigned long long>(aica.mixer.key_ons), aica.mixer.active_channels(),
         static_cast<unsigned long long>(aica.mixer.nonzero_samples),
         static_cast<unsigned long long>(aica.mixer.samples),
