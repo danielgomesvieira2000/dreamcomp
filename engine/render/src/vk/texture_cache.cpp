@@ -69,6 +69,8 @@ void TextureCache::rehash_banks() {
 
 void TextureCache::begin_frame() {
     ++frame_;
+    stage_slot_ = (stage_slot_ + 1) % kStageSlots;
+    stage_used_ = 0;
     // Leave headroom under the pool (kMaxTextures descriptor sets) for one frame's new textures.
     constexpr std::size_t kHigh = 1536, kLow = 1024;
     if (entries_.size() < kHigh || !ctx_ || !ctx_->device())
@@ -193,9 +195,23 @@ bool TextureCache::rendered_into(const TextureInfo& info) const {
 bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::uint32_t>& pixels,
                           std::uint32_t width, std::uint32_t height) {
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
-    if (!e.staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
-        return false;
-    e.staging.write(pixels.data(), static_cast<std::size_t>(bytes));
+    VkBuffer source = VK_NULL_HANDLE;
+    VkDeviceSize source_offset = 0;
+    HostBuffer& ring = stage_ring_[stage_slot_];
+    const VkDeviceSize at = (stage_used_ + 15u) & ~VkDeviceSize{15};
+    if (at + bytes <= kStageBytes && ring.ensure(*ctx_, kStageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) &&
+        ring.mapped()) {
+        std::memcpy(static_cast<std::uint8_t*>(ring.mapped()) + at, pixels.data(),
+                    static_cast<std::size_t>(bytes));
+        source = ring.handle();
+        source_offset = at;
+        stage_used_ = at + bytes;
+    } else {
+        if (!e.staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+            return false;
+        e.staging.write(pixels.data(), static_cast<std::size_t>(bytes));
+        source = e.staging.handle();
+    }
 
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -238,9 +254,10 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
                          0, nullptr, 0, nullptr, 1, &to_dst);
 
     VkBufferImageCopy copy{};
+    copy.bufferOffset = source_offset;
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, e.staging.handle(), e.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    vkCmdCopyBufferToImage(cmd, source, e.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            1, &copy);
 
     VkImageMemoryBarrier to_read = to_dst;
@@ -438,6 +455,7 @@ void TextureCache::destroy() {
     if (fallback_.memory)
         vkFreeMemory(ctx_->device(), fallback_.memory, nullptr);
     fallback_.staging.destroy();
+    for (auto& b : stage_ring_) b.destroy();
     fallback_.set = VK_NULL_HANDLE;
     fallback_.sampler = VK_NULL_HANDLE;
     for (auto& [key, sampler] : samplers_) vkDestroySampler(ctx_->device(), sampler, nullptr);

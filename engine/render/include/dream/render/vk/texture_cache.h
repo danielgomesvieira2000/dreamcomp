@@ -118,6 +118,13 @@ private:
     std::uint64_t bank_hash_[64]{};
     void rehash_banks();
     std::uint64_t frame_ = 1;
+    // Upload staging (dreamcomp): one ring buffer per in-flight render instead of a host buffer
+    // allocated -- and kept -- per texture. A texture that does not fit falls back to its own.
+    static constexpr unsigned kStageSlots = 4;
+    static constexpr VkDeviceSize kStageBytes = 8u << 20;
+    HostBuffer stage_ring_[kStageSlots];
+    unsigned stage_slot_ = 0;
+    VkDeviceSize stage_used_ = 0;
 
     void free_entry(Entry& e);
     VkSampler sampler_for(std::uint32_t tsp, bool tiled);
