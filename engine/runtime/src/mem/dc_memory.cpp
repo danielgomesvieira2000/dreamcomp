@@ -205,6 +205,7 @@ void DcMemory::store(std::uint32_t a, T v) {
                                sizeof(T)});
         }
         std::memcpy(t.bytes, &v, sizeof(T));
+        mark_vram(t.bytes, sizeof(T));
         note_ram_write(a, static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<T>>(v)),
                        sizeof(T));
         return;
@@ -348,6 +349,7 @@ void DcMemory::sq_flush(std::uint32_t a) {
                 journal.push_back({dest + 4 * i, old, words[i], 4});
             }
         std::memcpy(t.bytes, words, 32);
+        mark_vram(t.bytes, 32);
         // A burst into RAM is eight stores as far as anything watching memory is concerned. Until
         // this was here the hash and the watch saw none of them.
         if (tracing_writes())

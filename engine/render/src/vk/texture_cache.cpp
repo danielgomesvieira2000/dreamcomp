@@ -67,10 +67,24 @@ void TextureCache::rehash_banks() {
     }
 }
 
+void TextureCache::free_retired(bool all) {
+    std::size_t keep = 0;
+    for (std::size_t i = 0; i < retired_.size(); ++i) {
+        if (all || retired_[i].first + kStageSlots < frame_)
+            free_entry(retired_[i].second);
+        else if (keep != i)
+            retired_[keep++] = std::move(retired_[i]);
+        else
+            ++keep;
+    }
+    retired_.resize(keep);
+}
+
 void TextureCache::begin_frame() {
     ++frame_;
     stage_slot_ = (stage_slot_ + 1) % kStageSlots;
     stage_used_ = 0;
+    free_retired(false);
     // Leave headroom under the pool (kMaxTextures descriptor sets) for one frame's new textures.
     constexpr std::size_t kHigh = 1536, kLow = 1024;
     if (entries_.size() < kHigh || !ctx_ || !ctx_->device())
@@ -95,6 +109,7 @@ void TextureCache::invalidate() {
     vkDeviceWaitIdle(ctx_->device());
     for (auto& [key, e] : entries_) free_entry(e);
     entries_.clear();
+    free_retired(true);
 }
 
 void TextureCache::free_entry(Entry& e) {
@@ -148,12 +163,11 @@ std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t en
     }
     if (doomed.empty())
         return 0;
-    vkDeviceWaitIdle(ctx_->device());
     for (std::uint64_t key : doomed) {
         auto it = entries_.find(key);
         if (it == entries_.end())
             continue;
-        free_entry(it->second);
+        retired_.emplace_back(frame_, std::move(it->second));
         entries_.erase(it);
     }
     overwritten += static_cast<std::uint32_t>(doomed.size());

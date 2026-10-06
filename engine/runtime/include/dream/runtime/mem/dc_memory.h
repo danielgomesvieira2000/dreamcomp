@@ -5,6 +5,7 @@
 // log shows what it touched.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
@@ -102,6 +103,29 @@ public:
 
     std::uint8_t* ram() noexcept { return ram_.get(); }
     std::uint8_t* vram() noexcept { return vram_.get(); }
+    // Video memory written by the guest since the last take (dreamcomp): 4 KB pages, offsets in
+    // the 64-bit view (the texture cache's addresses). Every guest path into VRAM -- CPU stores,
+    // store-queue bursts, the TA texture path, the YUV converter, DMA -- goes through store() or
+    // sq_flush(), which mark it. `f(begin, end)` is called once per run of dirty pages.
+    template <typename F>
+    void take_vram_dirty(F&& f) {
+        if (!vram_any_dirty_)
+            return;
+        vram_any_dirty_ = false;
+        constexpr std::uint32_t kPages = kVramSize >> kVramPageBits;
+        std::uint32_t run = kPages;
+        for (std::uint32_t p = 0; p <= kPages; ++p) {
+            const bool dirty =
+                p < kPages && ((vram_dirty_[p >> 6] >> (p & 63)) & 1u) != 0;
+            if (dirty && run == kPages)
+                run = p;
+            if (!dirty && run != kPages) {
+                f(run << kVramPageBits, p << kVramPageBits);
+                run = kPages;
+            }
+        }
+        vram_dirty_.fill(0);
+    }
     std::uint8_t* aram() noexcept { return aram_.get(); }
     std::uint8_t* bios() noexcept { return bios_.get(); }
     std::uint8_t* flash() noexcept { return flash_.get(); }
@@ -231,6 +255,19 @@ public:
     static std::uint32_t vram_map32(std::uint32_t offset32) noexcept;
 
 private:
+    static constexpr std::uint32_t kVramPageBits = 12;
+    std::array<std::uint64_t, (8u << 20 >> 12) / 64> vram_dirty_{};
+    bool vram_any_dirty_ = false;
+    void mark_vram(const std::uint8_t* p, std::uint32_t bytes) noexcept {
+        const std::uint8_t* base = vram_.get();
+        if (p < base || p >= base + kVramSize)
+            return;
+        const auto first = static_cast<std::uint32_t>(p - base) >> kVramPageBits;
+        const auto last = static_cast<std::uint32_t>(p - base + bytes - 1) >> kVramPageBits;
+        for (std::uint32_t q = first; q <= last && q < (kVramSize >> kVramPageBits); ++q)
+            vram_dirty_[q >> 6] |= 1ull << (q & 63);
+        vram_any_dirty_ = true;
+    }
     struct Target {
         enum Kind { kNone, kBytes, kMmio } kind = kNone;
         std::uint8_t* bytes = nullptr;  // kBytes: host pointer to the first byte

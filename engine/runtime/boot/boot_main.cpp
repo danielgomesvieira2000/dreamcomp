@@ -305,6 +305,16 @@ struct Live {
         // actually changed, which is rare; dropping it every frame would decode every texture
         // every frame.
         renderer.textures().begin_frame();  // LRU eviction between renders (dreamcomp)
+        // Textures the guest has overwritten since the last render are decoded again (dreamcomp;
+        // Flycast write-protects texture pages for the same reason). DREAM_NO_VRAM_INVALIDATE=1
+        // keeps the old behaviour, for comparison.
+        {
+            static const bool keep = std::getenv("DREAM_NO_VRAM_INVALIDATE") != nullptr;
+            memory_.take_vram_dirty([&](std::uint32_t begin, std::uint32_t end) {
+                if (!keep)
+                    vram_invalidated += renderer.textures().invalidate_range(begin, end);
+            });
+        }
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))
             ++palette_changes;
         if (interpolate) {
@@ -905,6 +915,7 @@ struct Live {
     std::uint64_t interp_rendered = 0, interp_presented = 0, interp_cuts = 0, interp_jumped = 0,
                   interp_vertices = 0, interp_matched = 0;
     double interp_ms = 0.0;
+    std::uint64_t vram_invalidated = 0;  // textures dropped because the guest rewrote them
     std::chrono::steady_clock::time_point last_present{};
     dream::render::vk::Presenter presenter;
     dream::render::vk::Presenter overlay_presenter;  // dreamcomp: the in-game menu layer
@@ -2652,10 +2663,12 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(live->interp_jumped),
                 live->interp_rendered ? live->interp_ms / static_cast<double>(live->rendered) : 0.0);
         live->pacing.report();
-        std::printf("textures: %u decoded in %.1f ms, uploads recorded in %.1f ms\n",
+        std::printf("textures: %u decoded in %.1f ms, uploads recorded in %.1f ms, %llu dropped "
+                    "because the guest rewrote them\n",
                     live->renderer.textures().decoded,
                     static_cast<double>(live->renderer.textures().decode_ns) * 1e-6,
-                    static_cast<double>(live->renderer.textures().upload_ns) * 1e-6);
+                    static_cast<double>(live->renderer.textures().upload_ns) * 1e-6,
+                    static_cast<unsigned long long>(live->vram_invalidated));
         if (live->have_frame)
             std::printf("window: last shown %s\n", live->shown.describe().c_str());
         // Vulkan objects are destroyed now rather than at scope exit, while everything they were

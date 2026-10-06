@@ -31,6 +31,7 @@ Engine-level instruments (flags of the port executable, `--help`): `--suggest-co
 | `DREAM_NO_PIPELINE_CACHE=1` | Start without the persistent pipeline cache (to measure) |
 | `DREAM_NO_MODVOL=1` | Do not draw modifier volumes (shadows), to compare |
 | `DREAM_NO_FOG=1` | Do not apply fog, to compare |
+| `DREAM_NO_VRAM_INVALIDATE=1` | Keep cached textures when the guest rewrites their memory (the old behaviour), to compare |
 | `DREAM_PROFILE=1` | Host time per scheduler event and rendering after the report |
 | `DREAM_SINGLE_THREAD=1` | Guest and window events on one thread (upstream behaviour) |
 

@@ -123,6 +123,10 @@ private:
     static constexpr unsigned kStageSlots = 4;
     static constexpr VkDeviceSize kStageBytes = 8u << 20;
     HostBuffer stage_ring_[kStageSlots];
+    // Entries the guest overwrote (dreamcomp): out of the cache at once, destroyed once no render
+    // still in flight can sample them, instead of a device-wide wait on every overwrite.
+    std::vector<std::pair<std::uint64_t, Entry>> retired_;
+    void free_retired(bool all);
     unsigned stage_slot_ = 0;
     VkDeviceSize stage_used_ = 0;
 
