@@ -29,6 +29,11 @@ layout(location = 0) out vec4 colour;
 const int kMaxTaps = 4;
 
 void main() {
+    // The covering triangle reaches past the image once it is letterboxed or pillarboxed: nothing
+    // outside the image is drawn, so the bars keep the clear colour (dreamcomp; this used to smear
+    // the image's last row and column across them).
+    if (any(lessThan(v_uv, vec2(0.0))) || any(greaterThan(v_uv, vec2(1.0))))
+        discard;
     // Rounded up, not truncated. A footprint of 2.67 texels wants three taps; taking two leaves a
     // third of it unsampled, which is the aliasing this exists to remove. The small bias keeps a
     // 1:1 image on the single-tap path, where any averaging would only blur it -- without it a

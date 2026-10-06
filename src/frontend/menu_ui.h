@@ -130,6 +130,7 @@ private:
     std::string name_html(const std::string& key, const std::string& name, bool live) const;
     void describe(Rml::Element* e);
     float draft_aspect() const;
+    bool draft_expanded() const;
     bool tab_has_settings(int tab) const;
 
     void run_act(const std::string& act, Rml::Event* ev);

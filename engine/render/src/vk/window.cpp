@@ -187,6 +187,11 @@ bool Window::create_swapchain() {
     }
     if (extent_.width == 0 || extent_.height == 0)
         return true;  // minimised: nothing to build yet
+    if (std::getenv("DREAM_SWAPCHAIN_TRACE")) {
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(window_, &w, &h);
+        std::fprintf(stderr, "swapchain: %ux%u (window %dx%d)\n", extent_.width, extent_.height, w, h);
+    }
 
     std::uint32_t image_count = caps.minImageCount + 1;
     if (caps.maxImageCount != 0)
@@ -645,6 +650,20 @@ bool Window::pressed(Control c) const noexcept {
 bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
     if (!swapchain_)
         return false;
+    // A resized window (dreamcomp): some drivers keep presenting the old size without ever
+    // reporting the swapchain out of date, and the picture then lands offset and smeared. Rebuild
+    // when the window's pixel size and the swapchain's differ (not while minimised).
+    {
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(window_, &w, &h);
+        if (w > 0 && h > 0 &&
+            (static_cast<std::uint32_t>(w) != extent_.width ||
+             static_cast<std::uint32_t>(h) != extent_.height)) {
+            recreate_swapchain();
+            if (!swapchain_)
+                return false;
+        }
+    }
     vkWaitForFences(ctx_.device(), 1, &fences_[frame_], VK_TRUE, UINT64_MAX);
     const VkResult r = vkAcquireNextImageKHR(ctx_.device(), swapchain_, UINT64_MAX,
                                              acquired_[frame_], VK_NULL_HANDLE, &image_index);

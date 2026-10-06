@@ -90,6 +90,11 @@ struct HostControls {
     std::function<bool()> fullscreen;
     std::function<void(float)> set_volume;       // 0..1, master output level
     std::function<void(bool)> set_soft_clip;     // the AICA output's soft limiter (enhancement)
+    // Live aspect (dreamcomp): the window's width / height in pixels, and a new shape for the
+    // render target (the widened view of an anamorphic title; 4/3 or less is the original). The
+    // target is rebuilt at the next vblank.
+    std::function<float()> window_aspect;
+    std::function<void(float)> set_render_aspect;
     // The controller bindings file (dreamcomp): an overlay that edits bindings writes this file,
     // then calls reload_bindings so the game uses them at once.
     std::function<std::string()> bindings_path;

@@ -32,7 +32,14 @@ in-game panel off.
 |---|---|---|
 | General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), About (credits; opens the read-me) | rumble live; frame rate next start |
 | Controls | RecompFrontend's layout, below | bindings: at once |
-| Graphics | Resolution 1–8×, Aspect ratio (≤ `PortInfo::max_aspect`, only with `PortInfo::widescreen`), Fit to window, Fullscreen, Widescreen HUD, HUD layout (with `PortInfo::hud`) | fit, fullscreen, HUD live; resolution/aspect next start |
+| Graphics | Resolution 1–8×, Aspect ratio (Original / Expanded, as in the N64 recomps; Expanded only with `PortInfo::widescreen`), Window mode, Widescreen HUD, HUD layout (with `PortInfo::hud`) | aspect, window mode, HUD live; resolution next start |
+
+**Aspect ratio.** `aspect = original`: the console's 4:3 picture, black bars when the window is
+wider or taller, never stretched. `aspect = expanded`: the game's view is widened to the window's
+own shape (between 4:3 and `PortInfo::max_aspect`; bars only outside that range); resizing or going
+fullscreen rebuilds the render target at the new shape once the window has held it for 15 frames
+(`Core::follow_window`, `HostControls::set_render_aspect`). There is no stretch or crop mode any
+more. Older settings values read as: `4:3` -> original, any other ratio -> expanded.
 | Sound | Master volume, Loud sounds (Original = the console's hard clipping / Softened = `--soft-clip`) | live |
 | Mods | Texture pack, Open texture folder, Dump textures, mods list (on/off, ▲▼ order, first wins), Open mods folder | next start |
 
@@ -84,7 +91,7 @@ containers) in regions: launcher list; panel tab bar, rows, footer; dialog butto
 
 ## Settings keys
 
-`disc`, `scale`, `aspect`, `fit`, `fullscreen`, `fps`, `rumble`, `volume`, `clip`, `hud_fix`,
+`disc`, `scale`, `aspect` (`original`/`expanded`), `fullscreen`, `fps`, `rumble`, `volume`, `clip`, `hud_fix`,
 `hud_layout`, `texture_pack`, `dump_textures`, `mods` (ARCHITECTURE.md § Settings).
 
 ## How it is built

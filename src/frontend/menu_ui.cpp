@@ -570,10 +570,16 @@ std::string MenuUi::row_button(const std::string& id, const std::string& act,
     return r;
 }
 
-float MenuUi::draft_aspect() const {
+bool MenuUi::draft_expanded() const {
     if (!cfg_.port || !cfg_.port->widescreen)
-        return 4.0f / 3.0f;
-    return std::min(parse_aspect(draft_.get("aspect", "16:9")), cfg_.port->max_aspect);
+        return false;
+    const std::string a = draft_.get("aspect", "expanded");
+    return a != "original" && a != "4:3";
+}
+
+float MenuUi::draft_aspect() const {
+    // Expanded follows the window; 16:9 stands for it in the resolution's description.
+    return draft_expanded() ? std::min(16.0f / 9.0f, cfg_.port->max_aspect) : 4.0f / 3.0f;
 }
 
 bool MenuUi::tab_has_settings(int tab) const { return tab != 1; }
@@ -886,26 +892,17 @@ std::string MenuUi::tab_graphics() {
     s += row_radio("scale", "Resolution", scales, std::to_string(scale),
                    "Draws the 3D scene at a multiple of the console's 640\xC3\x97" "480. Higher is "
                    "sharper and needs a faster graphics card.<br/><br/>Now: " +
-                       esc(scale_label(scale, draft_aspect(), anam)),
+                       esc(scale_label(scale, draft_aspect(), anam)) +
+                       (draft_expanded() ? " at 16:9; the width follows the window" : ""),
                    false);
-    // Every aspect ratio is listed; those the port has not been verified with are greyed out.
-    const std::vector<Choice> aspects = {{"4:3", "4:3"}, {"16:9", "16:9"}, {"21:9", "21:9"},
-                                         {"32:9", "32:9"}};
-    std::vector<bool> aspect_on;
-    for (const auto& c : aspects)
-        aspect_on.push_back(c.value == "4:3" ||
-                            (ws && parse_aspect(c.value) <= cfg_.port->max_aspect + 0.01f));
-    s += row_radio("aspect", "Aspect ratio", aspects, ws ? draft_.get("aspect", "16:9") : "4:3",
-                   ws ? "A wider view of the scene, not a stretch. 4:3 is the original picture."
+    // As in the N64 recomps: the original 4:3 picture, or the view widened to the window.
+    s += row_radio("aspect", "Aspect ratio", {{"original", "Original"}, {"expanded", "Expanded"}},
+                   ws && draft_expanded() ? "expanded" : "original",
+                   ws ? "<b>Original</b> shows the console's 4:3 picture, with black bars when the "
+                        "window is wider.<br/><br/><b>Expanded</b> widens the game's view to fill "
+                        "the window, whatever its shape, without stretching anything."
                       : "This port shows the original 4:3 picture only.",
-                   false, aspect_on);
-    s += row_radio("fit", "Fit to window",
-                   {{"crop", "Crop"}, {"letterbox", "Letterbox"}, {"stretch", "Stretch"}},
-                   draft_.get("fit", "crop"),
-                   "How the picture fills the window when their shapes differ.<br/><br/><b>Crop</b> "
-                   "fills it without black bars. <b>Letterbox</b> shows the whole picture. "
-                   "<b>Stretch</b> fills it and distorts the shape.",
-                   true);
+                   true, {true, ws});
     s += row_radio("fullscreen", "Window mode", {{"false", "Windowed"}, {"true", "Fullscreen"}},
                    draft_.get_bool("fullscreen", false) ? "true" : "false",
                    "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",

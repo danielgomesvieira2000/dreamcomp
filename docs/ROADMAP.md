@@ -33,7 +33,7 @@ Entry gate: met (boots to menus on the engine).
 | Item | Plan | Status |
 |---|---|---|
 | Internal resolution | engine `--scale 1-4`; setting `scale` | works (engine) |
-| Widescreen (anamorphic) | `PortInfo::widescreen`; 16:9 / 21:9 / 32:9 at full resolution (`--render-aspect`) | done; crash was an emitter defect (fixed); no edge culling seen at 32:9 |
+| Widescreen (anamorphic) | `PortInfo::widescreen`; setting Original / Expanded (N64-recomp style): Expanded follows the window's shape up to `max_aspect` at full resolution (`--render-aspect`, rebuilt live) | done; 2026-10-06 verified with real window resizes (16:9, 3:1, square) in both modes; no edge culling seen at 32:9 |
 | Widescreen HUD fix | per-frame sprite-depth rule (docs/HUD.md): HUD keeps its 4:3 proportions, centred | done for Soulcalibur; edge anchoring needs an inspector |
 | Texture dump / replacement packs | content hash (XXH64, scheme v1) over the raw VRAM bytes the decoder reads (+ used palette colours / VQ codebook); `--dump-textures DIR`, `--texture-pack DIR`; settings `dump_textures`, `texture_pack` (default `<config dir>/textures`); in-house PNG codec | works (Soulcalibur: dump + 1 replaced texture verified in-game); no manifest, no mip chain, no async preload yet. `docs/TEXTURE-PACKS.md` |
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |

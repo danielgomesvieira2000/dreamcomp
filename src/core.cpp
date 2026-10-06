@@ -15,6 +15,7 @@
 // Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md),
 // rumble (--rumble), mods (--mod, docs/MODS.md), aspect, fullscreen, scale.
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -176,13 +177,30 @@ float parse_aspect(const std::string& s) {
     return (w > 0.0f && h > 0.0f) ? std::clamp(w / h, 4.0f / 3.0f, 4.0f) : 4.0f / 3.0f;
 }
 
-float target_aspect() {
+// Aspect ratio, as in the N64 recomps: `aspect = original` always shows the 4:3 picture (bars
+// on a wider window), `expanded` widens the game's view to the window's own shape, never
+// stretching. Older values ("4:3", "16:9", ...) read as original / expanded.
+bool expanded_aspect() {
     if (!g_port || !g_port->widescreen)
-        return 4.0f / 3.0f;
-    if (g_settings.get("aspect").empty() && !g_settings.get("widescreen").empty() &&
-        !g_settings.get_bool("widescreen", true))
-        return 4.0f / 3.0f;
-    return std::min(parse_aspect(g_settings.get("aspect", "16:9")), g_port->max_aspect);
+        return false;
+    const std::string a = g_settings.get("aspect", "expanded");
+    if (a == "original" || a == "4:3")
+        return false;
+    if (g_settings.get("aspect").empty() && !g_settings.get("widescreen").empty())
+        return g_settings.get_bool("widescreen", true);
+    return true;
+}
+
+// The shape in effect now: 4:3, or with Expanded the window's (clamped to what the port has been
+// verified with); kept by Core::follow_window(), read by the widescreen hook and the HUD fix.
+float g_aspect_now = 4.0f / 3.0f;
+
+float target_aspect() { return g_aspect_now; }
+
+// The shape Expanded asks for from a window of `window_aspect` (0: not known yet).
+float expanded_target(float window_aspect) {
+    const float a = window_aspect > 0.0f ? window_aspect : 16.0f / 9.0f;
+    return std::clamp(a, 4.0f / 3.0f, g_port ? g_port->max_aspect : 4.0f / 3.0f);
 }
 
 class Core final : public dream::host::Extension {
@@ -262,6 +280,8 @@ public:
         }
         add_texture_flags(args, g_settings.file().parent_path());
         add_input_and_mod_flags(args, g_settings.file().parent_path());
+        // Expanded starts at 16:9 (the window opens at that shape) and then follows the window.
+        g_aspect_now = expanded_aspect() ? expanded_target(0.0f) : 4.0f / 3.0f;
         const float aspect = target_aspect();
         if (aspect > 4.0f / 3.0f + 0.01f && g_port->widescreen_anamorphic &&
             !has_flag(args, "--render-aspect")) {
@@ -420,7 +440,34 @@ public:
             g_port->on_start(sys, g_settings);
         std::printf("dreamcomp: %s, settings %s%s\n", g_port && g_port->title ? g_port->title : "?",
                     g_settings.file().string().c_str(),
-                    widescreen() ? (", aspect " + g_settings.get("aspect", "16:9")).c_str() : "");
+                    expanded_aspect() ? ", aspect expanded" : ", aspect original");
+    }
+
+    // Expanded: the view follows the window's shape. A new shape is taken once the window has
+    // kept it for a quarter of a second, so dragging an edge does not rebuild the render target
+    // every frame. Original: back to 4:3.
+    void follow_window() {
+        if (!g_port || !g_port->widescreen)
+            return;
+        auto& hc = dream::host::host_controls();
+        const float want = expanded_aspect()
+                               ? expanded_target(hc.window_aspect ? hc.window_aspect() : 0.0f)
+                               : 4.0f / 3.0f;
+        if (std::fabs(want - g_aspect_now) < 0.005f) {
+            settle_ = 0;
+            return;
+        }
+        if (std::fabs(want - settle_aspect_) > 0.002f) {
+            settle_aspect_ = want;
+            settle_ = 0;
+            return;
+        }
+        if (++settle_ < 15)
+            return;
+        settle_ = 0;
+        g_aspect_now = want;
+        if (g_port->widescreen_anamorphic && hc.set_render_aspect)
+            hc.set_render_aspect(want);
     }
 
     void on_vblank(dream::System& sys) override {
@@ -429,6 +476,7 @@ public:
             overlay_->on_vblank(vblanks_);
 #endif
         ++vblanks_;
+        follow_window();
         if (g_port && g_port->widescreen)
             g_port->widescreen(sys, widescreen() ? target_aspect() : 4.0f / 3.0f);
         if (g_port && g_port->on_vblank)
@@ -594,8 +642,8 @@ public:
             hc.fullscreen() != g_settings.get_bool("fullscreen", false))
             hc.set_fullscreen(g_settings.get_bool("fullscreen", false));
         launch_dirty_ = false;  // the file now holds what is in effect
-        std::printf("dreamcomp: applied in game: fit %s, hud %s/%s, rumble %d%%, fullscreen %s\n",
-                    g_settings.get("fit", "crop").c_str(), hud_fix_ ? "on" : "off",
+        std::printf("dreamcomp: applied in game: aspect %s, hud %s/%s, rumble %d%%, fullscreen %s\n",
+                    expanded_aspect() ? "expanded" : "original", hud_fix_ ? "on" : "off",
                     hud_edges_ ? "edges" : "center", g_settings.get_int("rumble", 100),
                     g_settings.get_bool("fullscreen", false) ? "on" : "off");
     }
@@ -618,11 +666,10 @@ private:
     static void apply_presentation() {
 #ifdef DREAMCOMP_HAS_PRESENTER
         auto& o = dream::render::vk::present_options();
-        const std::string fit = g_settings.get("fit", "crop");
-        o.fit = fit == "letterbox" ? dream::render::vk::PresentOptions::Fit::Letterbox
-                : fit == "stretch" ? dream::render::vk::PresentOptions::Fit::Stretch
-                                   : dream::render::vk::PresentOptions::Fit::Crop;
-        // The render target already has the target's shape (--render-aspect): show it as is.
+        // Never stretched or cropped: the picture keeps its shape and the rest of the window is
+        // black (with Expanded the shapes match, so there are no bars).
+        o.fit = dream::render::vk::PresentOptions::Fit::Letterbox;
+        // The render target already has the picture's shape: show it as is.
         o.display_aspect = 0.0f;
 #endif
     }
@@ -634,6 +681,8 @@ private:
     std::unique_ptr<frontend::Overlay> overlay_;
 #endif
     bool hud_fix_ = true, hud_edges_ = true;
+    float settle_aspect_ = 0.0f;
+    unsigned settle_ = 0;
     struct HudItem {
         const dream::render::Polygon* poly;
         float x0, x1, y0, y1;

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <functional>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -211,8 +212,47 @@ struct Live {
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
     // geometry without lying to the guest about the size of its screen.
+    // The render target's size for a scale and shape (dreamcomp: also used when the shape
+    // changes at run time).
+    void target_size(float render_aspect, std::uint32_t& w, std::uint32_t& h) const {
+        const float wide = render_aspect > 0.0f ? render_aspect / (4.0f / 3.0f) : 1.0f;
+        w = static_cast<std::uint32_t>(static_cast<float>(kGuestWidth * scale_) * wide + 0.5f);
+        h = kGuestHeight * scale_;
+    }
+
+    // Rebuilds the render target(s) at a new shape (dreamcomp; Expanded aspect follows the
+    // window). On the guest thread at a vblank: the device is idled, the old frame is not shown
+    // again, and the next render fills the new target.
+    void retarget() {
+        if (want_render_aspect <= 0.0f || std::fabs(want_render_aspect - render_aspect_) < 0.005f)
+            return;
+        render_aspect_ = want_render_aspect;
+        std::uint32_t w = 0, h = 0;
+        target_size(render_aspect_, w, h);
+        if (w == offscreen.width() && h == offscreen.height())
+            return;
+        vkDeviceWaitIdle(window.context().device());
+        const bool readback = offscreen.readback;
+        offscreen.destroy();
+        offscreen.readback = readback;
+        if (!offscreen.create(window.context(), w, h))
+            std::fprintf(stderr, "window: cannot rebuild the render target: %s\n",
+                         offscreen.error().c_str());
+        if (interpolate) {
+            interp_off.destroy();
+            interp_off.create(window.context(), w, h);
+            interp_ready = false;
+            have_prev = false;
+        }
+        await_render = true;
+        std::printf("window: render target now %ux%u (aspect %.3f)\n", w, h,
+                    static_cast<double>(render_aspect_));
+    }
+
     bool start(unsigned scale, bool validation, const std::string& title,
                float render_aspect = 0.0f, bool fullscreen = false) {
+        scale_ = scale;
+        render_aspect_ = want_render_aspect = render_aspect;
         // --render-aspect (dreamcomp): an anamorphic widescreen title still addresses a 640x480
         // screen, but its view is squeezed horizontally; drawing it into a target that is wider
         // by the same factor keeps the horizontal resolution of a native wide render.
@@ -340,6 +380,7 @@ struct Live {
             prev_frame = frame;
             have_prev = true;
         }
+        await_render = false;
         if (!offscreen.render(renderer, frame, geometry)) {
             if (!reported_error) {
                 reported_error = true;
@@ -403,6 +444,7 @@ struct Live {
         guest_frame = frame;
         if (!window.poll())
             return false;
+        retarget();
         update_counter(guest_cycles);
         pump_menu();
 
@@ -411,7 +453,8 @@ struct Live {
         // The guest is displaying the buffer the renderer drew into, so show what was drawn rather
         // than a copy of it squeezed back through the guest's pixel format. This is also what makes
         // --scale visible: the window gets the full rendered resolution.
-        from_renderer = described && fb.enabled && rendered_into(fb.address);
+        // Not while a rebuilt target waits for its first render: its image is not drawn yet.
+        from_renderer = described && fb.enabled && rendered_into(fb.address) && !await_render;
         if (from_renderer) {
             shown = fb;
             shown.width = offscreen.width();
@@ -907,6 +950,9 @@ struct Live {
     dream::render::vk::Offscreen offscreen;
     // Geometry interpolation (dreamcomp, docs/INTERPOLATION.md): --interpolate.
     bool interpolate = false, pace_interpolation = true, have_prev = false, interp_ready = false;
+    unsigned scale_ = 1;
+    float render_aspect_ = 0.0f, want_render_aspect = 0.0f;
+    bool await_render = false;
     bool interpolate_only_above_60 = false;
     dream::render::vk::Offscreen interp_off;
     dream::render::Frame prev_frame, interp_frame;
@@ -2143,6 +2189,11 @@ int main(int argc, char** argv) {
             hc.set_rumble = [lp](float v) { lp->window.rumble_scale = std::clamp(v, 0.0f, 1.0f); };
             hc.set_fullscreen = [lp](bool on) { lp->window.set_fullscreen(on); };
             hc.fullscreen = [lp] { return lp->window.fullscreen(); };
+            hc.window_aspect = [lp] {
+                const VkExtent2D e = lp->window.extent();
+                return e.height ? static_cast<float>(e.width) / static_cast<float>(e.height) : 0.0f;
+            };
+            hc.set_render_aspect = [lp](float a) { lp->want_render_aspect = a; };
             hc.bindings_path = [lp] { return lp->bindings_path; };
             hc.reload_bindings = [lp] { lp->load_bindings(); };
             hc.set_volume = [&volume_percent](float v) {
