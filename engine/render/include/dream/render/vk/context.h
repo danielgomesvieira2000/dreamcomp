@@ -21,6 +21,9 @@ struct DeviceCapabilities {
     bool fragment_shader_interlock = false;    // ordered per-pixel access without a sort pass
     bool independent_blend = false;
     bool sampler_anisotropy = false;
+    // VK_KHR_external_memory_win32 + VK_KHR_win32_keyed_mutex enabled: images can be shared with
+    // D3D11 (dreamcomp, DxgiPresenter).
+    bool win32_interop = false;
     std::uint32_t max_texture_size = 0;
     std::string device_name;
 };

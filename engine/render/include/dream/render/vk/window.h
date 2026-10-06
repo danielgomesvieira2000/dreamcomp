@@ -12,6 +12,7 @@
 
 #include "dream/render/input.h"
 #include "dream/render/vk/context.h"
+#include "dream/render/vk/dxgi_present.h"
 #include "dream/render/vk/resources.h"
 
 #include <vulkan/vulkan.h>
@@ -68,6 +69,20 @@ public:
     // Call before create(). A mode the surface does not offer falls back to FIFO rather than
     // failing: a benchmark flag should not be able to stop the window opening.
     void set_present_mode(PresentMode m) noexcept { wanted_present_ = m; }
+    // Where frames go (dreamcomp). Vulkan (Auto, the default): the Vulkan swapchain. Dxgi: on
+    // Windows, a DXGI flip-model swapchain (dxgi_present.h) -- about a refresh less latency where
+    // the machine finishes every frame in time, falling back to Vulkan when it cannot initialise.
+    // Call before create().
+    enum class PresentPath { Auto, Vulkan, Dxgi };
+    void set_present_path(PresentPath p) noexcept { wanted_path_ = p; }
+    // "DXGI flip model (...)" or "Vulkan swapchain", once created.
+    std::string present_path() const;
+    // Frames are flipped to the display at the vblank after they are presented (the DXGI path),
+    // so when within a refresh a frame is presented decides its latency and whether it makes
+    // that vblank.
+    bool flips() const noexcept { return dxgi_ != nullptr; }
+    // Frames allowed to wait for the display on the DXGI path (adapts 1-3); 0 otherwise.
+    int flip_queue_depth() const noexcept { return dxgi_ ? dxgi_->queue_depth() : 0; }
 
     // Opens the window and creates the context, surface and swapchain. False on failure with
     // error() set; a machine with no display is an ordinary failure, not an exception.
@@ -185,6 +200,8 @@ public:
 
 private:
     bool create_swapchain();
+    bool create_vulkan_swapchain(std::uint32_t& count);
+    bool create_targets(std::uint32_t count);
     void destroy_swapchain();
 
     SDL_Window* window_ = nullptr;
@@ -241,6 +258,8 @@ private:
     bool pad_menu_button_ = true;
     bool game_input_blocked_ = false;
     PresentMode wanted_present_ = PresentMode::Fifo;
+    PresentPath wanted_path_ = PresentPath::Auto;
+    std::unique_ptr<DxgiPresenter> dxgi_;  // set when presenting through DXGI (dreamcomp)
     Binding capture_{};
 };
 

@@ -144,7 +144,31 @@ bool Window::create(const char* title, int width, int height, bool want_validati
     // with no configuration file and no visit to any UI.
     refresh_devices();
     set_bindings(Bindings::defaults());
-    return create_swapchain();
+#ifdef _WIN32
+    if (wanted_path_ == PresentPath::Dxgi) {
+        std::string why;
+        void* hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window_),
+                                            SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        dxgi_ = hwnd ? DxgiPresenter::create(ctx_, hwnd, why) : nullptr;
+        if (!dxgi_)
+            std::fprintf(stderr, "window: not presenting through DXGI: %s\n",
+                         hwnd ? why.c_str() : "no HWND");
+    }
+#endif
+    if (!create_swapchain() && dxgi_) {
+        // The shared images did not work out on this machine: present through Vulkan instead.
+        std::fprintf(stderr, "window: DXGI presentation failed (%s); using the Vulkan swapchain\n",
+                     error_.c_str());
+        destroy_swapchain();
+        dxgi_.reset();
+        error_.clear();
+        return create_swapchain();
+    }
+    return true;
+}
+
+std::string Window::present_path() const {
+    return dxgi_ ? dxgi_->description() : std::string("Vulkan swapchain");
 }
 
 // FIFO is the only mode the specification requires a surface to support, so everything else is
@@ -171,6 +195,32 @@ VkPresentModeKHR Window::choose_present_mode() const {
 }
 
 bool Window::create_swapchain() {
+    std::uint32_t count = 0;
+    if (dxgi_) {
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(window_, &w, &h);
+        extent_ = {static_cast<std::uint32_t>(std::max(w, 0)), static_cast<std::uint32_t>(std::max(h, 0))};
+        if (extent_.width == 0 || extent_.height == 0)
+            return true;  // minimised: nothing to build yet
+        format_ = VK_FORMAT_B8G8R8A8_UNORM;
+        std::string why;
+        if (!dxgi_->resize(extent_.width, extent_.height, why)) {
+            error_ = why;
+            return false;
+        }
+        images_ = dxgi_->images();
+        count = static_cast<std::uint32_t>(images_.size());
+        if (std::getenv("DREAM_SWAPCHAIN_TRACE"))
+            std::fprintf(stderr, "swapchain: DXGI %ux%u\n", extent_.width, extent_.height);
+    } else if (!create_vulkan_swapchain(count)) {
+        return false;
+    } else if (!swapchain_) {
+        return true;  // minimised
+    }
+    return create_targets(count);
+}
+
+bool Window::create_vulkan_swapchain(std::uint32_t& count) {
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx_.physical_device(), surface_, &caps);
 
@@ -227,11 +277,14 @@ bool Window::create_swapchain() {
         return false;
     }
 
-    std::uint32_t count = 0;
     vkGetSwapchainImagesKHR(ctx_.device(), swapchain_, &count, nullptr);
     images_.resize(count);
     vkGetSwapchainImagesKHR(ctx_.device(), swapchain_, &count, images_.data());
+    return true;
+}
 
+// The render pass, depth buffer, views and framebuffers over images_ (either path).
+bool Window::create_targets(std::uint32_t count) {
     // Colour and depth. The renderer writes depth from the fragment shader (the hardware's depth
     // is 1/w), so a depth attachment is needed even for opaque geometry.
     depth_format_ = pick_depth_format(ctx_.physical_device());
@@ -253,7 +306,8 @@ bool Window::create_swapchain() {
     attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // A DXGI shared image is handed to D3D11, not to a presentation engine.
+    attachments[0].finalLayout = dxgi_ ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     attachments[1].format = depth_format_;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -330,6 +384,8 @@ void Window::destroy_swapchain() {
         vkDestroySwapchainKHR(ctx_.device(), swapchain_, nullptr);
         swapchain_ = VK_NULL_HANDLE;
     }
+    if (dxgi_)
+        dxgi_->release_images();
 }
 
 bool Window::recreate_swapchain() {
@@ -696,7 +752,7 @@ bool Window::pressed(Control c) const noexcept {
 }
 
 bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
-    if (!swapchain_)
+    if (!swapchain_ && !(dxgi_ && !images_.empty()))
         return false;
     // A resized window (dreamcomp): some drivers keep presenting the old size without ever
     // reporting the swapchain out of date, and the picture then lands offset and smeared. Rebuild
@@ -708,10 +764,17 @@ bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
             (static_cast<std::uint32_t>(w) != extent_.width ||
              static_cast<std::uint32_t>(h) != extent_.height)) {
             recreate_swapchain();
-            if (!swapchain_)
+            if (!swapchain_ && !(dxgi_ && !images_.empty()))
                 return false;
         }
     }
+    if (dxgi_) {
+        // DXGI: one shared image per frame in flight; its fence says Vulkan is done with it, its
+        // keyed mutex (in the submit) that D3D11 is.
+        // (The latency object is checked by present(), never waited on here.)
+        vkWaitForFences(ctx_.device(), 1, &fences_[frame_], VK_TRUE, UINT64_MAX);
+        image_index = frame_;
+    } else {
     vkWaitForFences(ctx_.device(), 1, &fences_[frame_], VK_TRUE, UINT64_MAX);
     const VkResult r = vkAcquireNextImageKHR(ctx_.device(), swapchain_, UINT64_MAX,
                                              acquired_[frame_], VK_NULL_HANDLE, &image_index);
@@ -723,6 +786,7 @@ bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         error_ = "vkAcquireNextImageKHR failed";
         return false;
+    }
     }
     vkResetFences(ctx_.device(), 1, &fences_[frame_]);
     cmd = cmds_[frame_];
@@ -737,6 +801,27 @@ bool Window::begin_frame(std::uint32_t& image_index, VkCommandBuffer& cmd) {
 bool Window::end_frame(std::uint32_t image_index) {
     VkCommandBuffer cmd = cmds_[frame_];
     vkEndCommandBuffer(cmd);
+    if (dxgi_) {
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.pNext = dxgi_->submit_chain(image_index);
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cmd;
+        vkQueueSubmit(ctx_.queue(), 1, &si, fences_[frame_]);
+        // In order, at most one frame waiting (Queued) by default; DREAM_DXGI_LATEST=1 for the
+        // mailbox-style mode, for comparison.
+        static const bool latest = [] {
+            const char* e = std::getenv("DREAM_DXGI_LATEST");
+            return e && *e == '1';
+        }();
+        const auto mode = wanted_present_ == PresentMode::Immediate ? DxgiPresenter::Mode::Tearing
+                          : latest                                 ? DxgiPresenter::Mode::Latest
+                                                                   : DxgiPresenter::Mode::Queued;
+        const bool ok = dxgi_->present(image_index, mode);
+        last_presented_ = image_index;
+        frame_ = (frame_ + 1) % kFramesInFlight;
+        return ok;
+    }
     const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -787,7 +872,8 @@ bool Window::read_pixels(std::vector<std::uint8_t>& out, std::uint32_t& width,
     VkImage image = images_[last_presented_];
     VkImageMemoryBarrier to_src{};
     to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    const VkImageLayout shown = dxgi_ ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_src.oldLayout = shown;
     to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -805,7 +891,7 @@ bool Window::read_pixels(std::vector<std::uint8_t>& out, std::uint32_t& width,
 
     VkImageMemoryBarrier back = to_src;
     back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    back.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    back.newLayout = shown;
     back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     back.dstAccessMask = 0;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
@@ -814,6 +900,7 @@ bool Window::read_pixels(std::vector<std::uint8_t>& out, std::uint32_t& width,
 
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.pNext = dxgi_ ? dxgi_->read_chain(last_presented_) : nullptr;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
     vkQueueSubmit(ctx_.queue(), 1, &si, VK_NULL_HANDLE);
@@ -836,6 +923,7 @@ void Window::destroy() {
     if (ctx_.device()) {
         vkDeviceWaitIdle(ctx_.device());
         destroy_swapchain();
+        dxgi_.reset();
         for (VkFence f : fences_) vkDestroyFence(ctx_.device(), f, nullptr);
         for (VkSemaphore s : acquired_) vkDestroySemaphore(ctx_.device(), s, nullptr);
         for (VkSemaphore s : rendered_) vkDestroySemaphore(ctx_.device(), s, nullptr);

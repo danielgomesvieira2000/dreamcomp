@@ -916,6 +916,16 @@ std::string MenuUi::tab_graphics() {
                    draft_.get_bool("fullscreen", false) ? "true" : "false",
                    "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
                    true);
+#ifdef _WIN32
+    s += row_radio("latency", "Latency", {{"standard", "Standard"}, {"low", "Low"}},
+                   draft_.get("latency", "standard") == "low" ? "low" : "standard",
+                   "<b>Standard</b> keeps a few frames queued for the screen: perfectly smooth "
+                   "everywhere.<br/><br/><b>Low</b> hands each frame to the screen as directly as "
+                   "Windows allows, about 13 ms sooner. It needs a computer that finishes every "
+                   "frame in time: on a laptop running on battery it falls back to queueing "
+                   "frames, and an occasional frame may repeat.",
+                   false);
+#endif
     if (cfg_.port && cfg_.port->hud.enabled) {
         // With Expanded the HUD is never stretched; this only says where it sits.
         const bool wide = draft_expanded();
@@ -1153,6 +1163,8 @@ void MenuUi::adjust(const std::string& key, int step) {
     } else if (key == "frame_timing") {
         draft_.set("frame_timing", cycle({{"display", ""}, {"exact", ""}},
                                          draft_.get("frame_timing", "display"), step));
+    } else if (key == "latency") {
+        draft_.set("latency", cycle({{"standard", ""}, {"low", ""}}, draft_.get("latency", "standard"), step));
     } else if (key == "hud_layout") {
         draft_.set("hud_layout",
                    cycle({{"edges", ""}, {"center", ""}}, draft_.get("hud_layout", "edges"), step));

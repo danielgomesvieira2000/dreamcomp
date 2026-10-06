@@ -144,6 +144,25 @@ struct DisplaySync {
     std::uint64_t locked = 0, unlocked = 0;
     // Recent guest frame lengths in host time (pads read -> next vblank), for the report.
     std::vector<float> emu_ms;
+    // Phase lock (dreamcomp), where frames are flipped (Window::flips(), the DXGI path): each
+    // frame starts so that even a slow one is presented `margin` before its vblank. The start is
+    // `budget` (the slowest frame of the last second plus `pad`) before that point, so the pads
+    // are still read just before the guest runs, and a typical frame lands a few ms before the
+    // vblank instead of straddling it. Without it, presents drifted across vblanks with the
+    // emulation time and the panel dropped one frame and repeated another (181 in a minute).
+    std::chrono::nanoseconds margin{3'000'000};  // DREAM_SYNC_MARGIN_MS
+    std::chrono::nanoseconds pad{1'000'000};     // DREAM_SYNC_PAD_MS
+    std::chrono::steady_clock::time_point target{};  // the vblank the frame being run aims at
+    std::uint64_t phase_locked = 0, late = 0, reanchored = 0;
+    std::vector<float> aim_ms;  // present time against target - margin
+    std::chrono::nanoseconds budget(std::chrono::nanoseconds period) const {
+        const std::size_t n = emu_ms.size(), from = n > 60 ? n - 60 : 0;
+        float worst = 10.0f;
+        if (n > from)
+            worst = *std::max_element(emu_ms.begin() + static_cast<std::ptrdiff_t>(from), emu_ms.end());
+        const auto b = std::chrono::nanoseconds(static_cast<long long>(worst * 1e6)) + pad;
+        return std::min(b, period - margin - std::chrono::nanoseconds(1'000'000));
+    }
     double note_guest_frame(std::uint64_t cycles) {
         double s = 0;
         if (last_cycles && cycles > last_cycles) {
@@ -160,6 +179,21 @@ struct DisplaySync {
                         static_cast<unsigned long long>(locked), display_hz,
                         guest_frame_s > 0 ? 1.0 / guest_frame_s : 0.0, factor,
                         static_cast<unsigned long long>(unlocked));
+        if (phase_locked) {
+            std::printf("display sync: %llu frames phase-locked (margin %.1f ms), %llu presented after "
+                        "their aim by more than the margin, %llu re-aimed",
+                        static_cast<unsigned long long>(phase_locked),
+                        static_cast<double>(margin.count()) * 1e-6, static_cast<unsigned long long>(late),
+                        static_cast<unsigned long long>(reanchored));
+            if (aim_ms.size() >= 10) {
+                std::vector<float> v = aim_ms;
+                std::sort(v.begin(), v.end());
+                std::printf("; present vs aim p5 %.2f p50 %.2f p95 %.2f max %.1f ms",
+                            static_cast<double>(v[v.size() / 20]), static_cast<double>(v[v.size() / 2]),
+                            static_cast<double>(v[v.size() * 19 / 20]), static_cast<double>(v.back()));
+            }
+            std::printf("\n");
+        }
         if (emu_ms.size() >= 10) {
             std::vector<float> v = emu_ms;
             std::sort(v.begin(), v.end());
@@ -381,6 +415,7 @@ struct Live {
                             pvr_.reg_block() + 0x1000 / 4, palette_format());
         std::printf("window: %s, drawing at %ux%u\n", window.context().caps().device_name.c_str(),
                     w, h);
+        std::printf("window: presenting through %s\n", window.present_path().c_str());
         return true;
     }
 
@@ -1497,9 +1532,10 @@ void usage(const char* argv0, std::FILE* out) {
         "  --interpolate          draw a blended frame between two game frames (needs a display\n"
         "                         above 60 Hz to be seen; docs/INTERPOLATION.md in dreamcomp)\n"
         "  --interpolate-auto     the same, only when the window's display is above 60 Hz\n"
-        "  --sync-display         pace at the display's rate when it is within 0.5% of the\n"
-        "                         game's (60 Hz for a 59.94 Hz game: +0.1% speed, no repeats)\n"
+        "  --sync-display         pace at the display's rate when it is within 0.5%% of the\n"
+        "                         game's (60 Hz for a 59.94 Hz game: +0.1%% speed, no repeats)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
+        "  --present-path P       vulkan (default) or dxgi (Windows: flip model, lower latency)\n"
         "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
         "                         whole run to the panel, so --unthrottled with a window measures\n"
         "                         the refresh rate rather than the emulator.\n"
@@ -1584,6 +1620,9 @@ static std::uint64_t g_render_ns = 0, g_renders = 0;
 
 // Crash reports (dreamcomp): defined at the end of this file, away from <windows.h>'s macros.
 void install_crash_handler();
+// Sleeps until `t` within a fraction of a millisecond (dreamcomp; Windows: a high-resolution
+// waitable timer, where std::this_thread::sleep_until wakes 1-3 ms late). Defined at the end.
+void precise_sleep_until(std::chrono::steady_clock::time_point t);
 
 int main(int argc, char** argv) {
     install_crash_handler();
@@ -1623,6 +1662,16 @@ int main(int argc, char** argv) {
     // --present-mode: vsync paces the run to the panel, which is right for playing and wrong for
     // measuring. Nothing about the guest changes either way.
     auto present_mode = dream::render::vk::Window::PresentMode::Fifo;
+    // --present-path vulkan|dxgi (dreamcomp; DREAM_PRESENT_PATH the same): dxgi presents through a
+    // DXGI flip-model swapchain on Windows, a refresh sooner than some drivers' Vulkan swapchains
+    // where the machine has the headroom (dxgi_present.h, docs/PACING.md in dreamcomp).
+    auto present_path = dream::render::vk::Window::PresentPath::Auto;
+    if (const char* e = std::getenv("DREAM_PRESENT_PATH")) {
+        if (!std::strcmp(e, "vulkan"))
+            present_path = dream::render::vk::Window::PresentPath::Vulkan;
+        else if (!std::strcmp(e, "dxgi"))
+            present_path = dream::render::vk::Window::PresentPath::Dxgi;
+    }
 #endif
     // --bindings FILE: where the controller layout is read from and written back to. Unset means
     // the host's per-user settings directory, so one layout follows the player across every title.
@@ -1732,6 +1781,13 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--screenshot-presented"))
             shot_presented = true;
 #ifdef DREAM_WITH_RENDERER
+        else if (!std::strcmp(argv[i], "--present-path") && i + 1 < argc) {
+            const char* p = argv[++i];
+            using PP = dream::render::vk::Window::PresentPath;
+            present_path = !std::strcmp(p, "vulkan") ? PP::Vulkan
+                           : !std::strcmp(p, "dxgi") ? PP::Dxgi
+                                                     : PP::Auto;
+        }
         else if (!std::strcmp(argv[i], "--present-mode") && i + 1 < argc) {
             const char* m = argv[++i];
             using PM = dream::render::vk::Window::PresentMode;
@@ -2212,6 +2268,12 @@ int main(int argc, char** argv) {
         live->interpolate_only_above_60 = interpolate_auto && !interpolate_frames;
         live->pace_interpolation = !unthrottled;
         live->sync.enabled = sync_display;
+        auto env_ms = [](const char* name, std::chrono::nanoseconds& out) {
+            if (const char* e = std::getenv(name))
+                out = std::chrono::nanoseconds(static_cast<long long>(std::atof(e) * 1e6));
+        };
+        env_ms("DREAM_SYNC_MARGIN_MS", live->sync.margin);
+        env_ms("DREAM_SYNC_PAD_MS", live->sync.pad);
         // The host copy of every frame is only needed for write-back; everything else reads it on
         // demand. DREAM_NO_DIRECT_PRESENT=1 restores the copy for A/B measurements.
         {
@@ -2221,6 +2283,7 @@ int main(int argc, char** argv) {
         live->show_fps = start_with_fps;
         live->shot_presented = shot_presented;
         live->window.set_present_mode(present_mode);
+        live->window.set_present_path(present_path);
         live->screenshot_at = screenshot_at;
         live->capture_at = capture_at;
         // The window names the title being run. The config is the only place that name is written
@@ -2338,6 +2401,19 @@ int main(int argc, char** argv) {
                                           vblank_at - live->pacing.input_read)
                                           .count());
             const double frame_s = sync.note_guest_frame(sys.ctx.cycles);
+            if (sync.target.time_since_epoch().count() != 0) {
+                const auto aim = sync.target - sync.margin;
+                const float off = std::chrono::duration<float, std::milli>(vblank_at - aim).count();
+                if (sync.aim_ms.size() < 2'000'000)
+                    sync.aim_ms.push_back(off);
+                if (off > 0.0f)
+                    ++sync.late;
+                // Early: hold the frame until its moment, so presents keep one per refresh at a
+                // fixed point before the vblank (a frame presented early would otherwise replace
+                // the one before it while that still waits for its flip).
+                else
+                    precise_sleep_until(aim);
+            }
             live->pacing.presenting();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
                 throw StopRun{"the window was closed"};
@@ -2354,6 +2430,7 @@ int main(int argc, char** argv) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(8));
                 }
                 due = {};  // start the clock again from now
+                sync.target = {};
             }
             // Pads are read after the pacing sleep (dreamcomp), right before the guest runs the
             // frame that uses them: read before the sleep, the input was a sleep older (about
@@ -2377,29 +2454,76 @@ int main(int argc, char** argv) {
             }
             // Display sync: the clock's rate.
             sync.factor = 1.0;
+            bool phased = false;
             if (sync.enabled && !live->interpolate && sync.guest_frame_s > 0) {
                 std::chrono::steady_clock::time_point vb;
                 std::chrono::nanoseconds period{};
                 if (live->window.vblank_grid(vb, period) && period.count() > 0) {
                     sync.display_hz = 1e9 / static_cast<double>(period.count());
                     const double guest_hz = 1.0 / sync.guest_frame_s;
-                    if (std::abs(sync.display_hz - guest_hz) / guest_hz < 0.005)
+                    if (std::abs(sync.display_hz - guest_hz) / guest_hz < 0.005) {
                         sync.factor = sync.display_hz * (1.0 - 1e-4) / guest_hz;
+                        static const bool phase_off = [] {
+                            const char* e = std::getenv("DREAM_PHASE_LOCK");
+                            return e && *e == '0';
+                        }();
+                        // Only while one frame waits: deeper (frames arriving late, e.g. on
+                        // battery) the slot grid never makes up a late frame's time and the panel
+                        // ran dry (7 repeats in 90 s at depth 3), while the rate clock below
+                        // catches up (0), and the phase buys no latency at that depth anyway.
+                        if (live->window.flips() && live->window.flip_queue_depth() == 1 && !phase_off) {
+                            // The next vblank on the grid after the last target; started afresh
+                            // (or after falling a whole refresh behind) from the first vblank a
+                            // frame starting now could make.
+                            const auto now = std::chrono::steady_clock::now();
+                            const auto per = std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
+                            auto snap = [&](std::chrono::steady_clock::time_point t) {
+                                const double k = std::round(static_cast<double>((t - vb).count()) /
+                                                            static_cast<double>(per.count()));
+                                return vb + per * static_cast<long long>(k);
+                            };
+                            const auto budget = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                sync.budget(period));
+                            const auto lead = budget + sync.margin;
+                            auto next = sync.target.time_since_epoch().count() == 0
+                                            ? sync.target
+                                            : snap(sync.target + per);
+                            if (next.time_since_epoch().count() == 0 || next - lead < now - per) {
+                                next = snap(now + lead + per / 2);
+                                if (sync.target.time_since_epoch().count() != 0)
+                                    ++sync.reanchored;
+                            }
+                            sync.target = next;
+                            const auto wake = next - lead;
+                            if (wake > now) {
+                                precise_sleep_until(wake);
+                                live->pacing.slept(wake);
+                            }
+                            due = std::chrono::steady_clock::now();  // the rate clock follows
+                            ++sync.phase_locked;
+                            phased = true;
+                        }
+                    }
                 }
                 ++(sync.factor != 1.0 ? sync.locked : sync.unlocked);
             }
+            if (!phased)
+                sync.target = {};
             const auto now = std::chrono::steady_clock::now();
             const auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                 std::chrono::duration<double>(frame_s / sync.factor));
             // A stall of more than a few frames (loading, the window dragged) is not caught up:
             // the frames that took too long are gone, and sprinting would only stutter the audio.
-            if (due.time_since_epoch().count() == 0 || now - (due + step) > std::chrono::milliseconds(50))
-                due = now;
-            else
-                due += step;
-            if (due > now) {
-                std::this_thread::sleep_until(due);
-                live->pacing.slept(due);
+            if (!phased) {
+                if (due.time_since_epoch().count() == 0 ||
+                    now - (due + step) > std::chrono::milliseconds(50))
+                    due = now;
+                else
+                    due += step;
+                if (due > now) {
+                    std::this_thread::sleep_until(due);
+                    live->pacing.slept(due);
+                }
             }
             read_pads();
             live->pacing.vblank(sys.spg.frames(), live->renderer.textures().decoded,
@@ -3111,8 +3235,47 @@ void install_crash_handler() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     SetUnhandledExceptionFilter(on_crash);
 }
+
+void precise_sleep_until(std::chrono::steady_clock::time_point t) {
+    // One high-resolution timer per thread (Windows 10 1803+); without one, plain sleep.
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    thread_local HANDLE timer =
+        CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    // DREAM_SPIN_MS=N busy-waits the last N ms of each wait. A laptop CPU clocks down while the
+    // game thread sleeps, and emulating a frame then takes about twice as long (i5-1335U: 11 ms
+    // against 5); spinning 3 ms keeps it up, for ~5 ms fresher input at the cost of power and
+    // heat. Off by default (docs/PACING.md in dreamcomp).
+    static const auto spin = std::chrono::microseconds(static_cast<long long>(
+        (std::getenv("DREAM_SPIN_MS") ? std::atof(std::getenv("DREAM_SPIN_MS")) : 0.0) * 1000));
+    if (spin.count() > 0) {
+        const auto until = t - spin;
+        if (until > std::chrono::steady_clock::now())
+            precise_sleep_until(until);
+        while (std::chrono::steady_clock::now() < t) {}
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (t <= now)
+        return;
+    if (!timer) {
+        std::this_thread::sleep_until(t);
+        return;
+    }
+    // Relative due time in 100 ns units (negative = relative).
+    LARGE_INTEGER due;
+    due.QuadPart = -static_cast<LONGLONG>(std::chrono::duration_cast<std::chrono::nanoseconds>(t - now).count() / 100);
+    if (SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0))
+        WaitForSingleObject(timer, INFINITE);
+    else
+        std::this_thread::sleep_until(t);
+}
 #else
 void install_crash_handler() {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
+}
+void precise_sleep_until(std::chrono::steady_clock::time_point t) {
+    std::this_thread::sleep_until(t);
 }
 #endif

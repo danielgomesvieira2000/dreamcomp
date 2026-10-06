@@ -153,6 +153,15 @@ bool Context::pick_device() {
     // Required by the specification whenever the device is a portability driver (MoltenVK).
     if (has_extension(device_exts, "VK_KHR_portability_subset"))
         enabled.push_back("VK_KHR_portability_subset");
+#ifdef _WIN32
+    // dreamcomp: sharing images with D3D11, for presenting through DXGI (dxgi_present.h).
+    if (has_extension(device_exts, "VK_KHR_external_memory_win32") &&
+        has_extension(device_exts, "VK_KHR_win32_keyed_mutex")) {
+        enabled.push_back("VK_KHR_external_memory_win32");
+        enabled.push_back("VK_KHR_win32_keyed_mutex");
+        caps_.win32_interop = true;
+    }
+#endif
 
     std::uint32_t family_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_, &family_count, nullptr);

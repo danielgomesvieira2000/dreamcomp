@@ -63,7 +63,50 @@ Tried and dropped (2026-10-06):
 | Phase lock: present a margin (1-12 ms) before each vblank, emulation scheduled just in time | 40-75 repeated frames per 30 s (emulation time varies 4-16 ms and there is no queue slack left); with a final 2-4 ms busy-wait 3-5 per 30 s; display latency 48.0 ms at every margin: on this copy path the moment of presentation inside a refresh does not change latency |
 | `VK_EXT_full_screen_exclusive` | `ALLOWED`: still the GDI copy; `APPLICATION_CONTROLLED`: acquire fails (-3) and the swapchain is rebuilt every frame |
 | Power-throttling opt-out, MMCSS "Games" for the game thread | no change in host time per frame |
-| DXGI flip model (standalone D3D11 probe, not the game) | "Hardware Composed: Independent Flip", windowed and fullscreen, display latency 31.9 ms against the game's 48: about one refresh less. A Vulkan -> DXGI present path is the candidate next step |
+| DXGI flip model (standalone D3D11 probe, not the game) | "Hardware Composed: Independent Flip", windowed and fullscreen, display latency 31.9 ms against the game's 48: about one refresh less. Built: next section |
+
+## Latency setting: DXGI presentation (`latency = low`, opt-in; D-009)
+
+`engine/render/src/vk/dxgi_present.cpp`: Vulkan renders into two textures shared with a D3D11 device
+on the same GPU (matched by LUID; `VK_KHR_external_memory_win32`, keyed mutex), D3D11 copies the
+finished one into a flip-model swapchain (5 buffers) and presents. `--present-path dxgi` /
+`DREAM_PRESENT_PATH`; falls back to the Vulkan swapchain when anything fails to initialise. The
+report prints a `dxgi:` line (skips, queue depth, time in AcquireSync / copy / Present).
+Validation layers: no messages. Fullscreen on/off, resizes (DXGI buffers and shared textures
+rebuilt), the in-game menu, `--screenshot-presented`, 120 fps interpolation and
+`--present-mode immediate` all checked.
+
+What it took to make it pace (60-90 s PresentMon runs, Iris Xe, i5-1335U):
+
+| Configuration | Display latency | Repeated / dropped frames | Notes |
+|---|---|---|---|
+| Vulkan swapchain (default), display sync | 47.5-48.0 ms | 0-1 / 0 per minute | plugged in and on battery |
+| DXGI, latency 1, waiting on the latency object | 32.2 ms | 3 / 0 per 30 s | blocked the game thread: 14 frames over 20 ms a minute |
+| DXGI, sync interval 0 (mailbox) | 33.6 ms | 177 / 181 per minute | Intel drops "Hardware: Independent Flip" frames even with perfectly regular presents |
+| DXGI, sync interval 1, queue unchecked | 52-58 ms | 0 / 0 | the queue fills to two and stays |
+| DXGI, queued, skip when two wait, phase lock (*) | 34.7 ms | 2 / 0 per minute | input age 12.5 ms; power state not recorded, inferred plugged in (emulation p50 11.5 ms) |
+| same + 3 ms busy-wait before each frame (*) | 35.8 ms | 1 / 0 per minute | input age 6.9 ms (emulation 5 ms at full clocks) |
+| same as (*), on battery | 33.9-34.0 ms | 25-53 / 0 per minute | emulation p90 16.6-17.1 ms: frames miss their vblank |
+| DXGI at depth 3 with phase lock, on battery | 47.4 ms | 7 per 90 s | fixed slots never make up a late frame |
+| DXGI with the rate clock, on battery | 52.1 ms | 0 per 90 s | catches up, but the queue is deep |
+
+Why: on this laptop a frame takes 11-17 ms to emulate at the clocks it runs at while pacing (5 ms
+when kept busy), plus ~8 ms of GPU work. That fits a 16.7 ms refresh only with a frame queued: a
+queue of ~3 frames never repeats one and costs ~48 ms whichever API presents it; one frame
+queued is ~35 ms but repeats a frame whenever one is late.
+
+So `latency = low` is opt-in. What it does: queued presents (sync interval 1); a present is
+skipped (one repeat) when two frames already wait, so a late frame does not leave a permanent
+extra refresh of latency; frames are phase-locked to the vblank grid (start so that the slowest
+recent frame is presented 3 ms before its vblank; held until then if early; Windows
+high-resolution waitable timer for the waits) while one frame waits. When skips come often (2 in
+30 s) the presenter lets one more frame wait (up to 3) and pacing returns to the rate clock,
+which catches up; it retries one less after 60 s, backing off to 4 minutes. `DREAM_SPIN_MS=N`
+busy-waits the last N ms of each wait (fresher input, more power); `DREAM_DXGI_MIN_DEPTH`,
+`DREAM_DXGI_LATEST=1`, `DREAM_PHASE_LOCK=0` exist for measurements.
+
+Not verified: the final adaptive version plugged in (its battery run deepened during boot and
+sat at depth 3, 61.8 ms); a display above 60 Hz; other GPUs.
 
 ## Changes
 
@@ -71,6 +114,7 @@ Tried and dropped (2026-10-06):
 |---|---|---|
 | 2026-10-06 | Pacing sleep fixed (dangling `paused_for`; engine-changes.md) | runs without vsync held to 1.0x |
 | 2026-10-06 | Display sync, setting `frame_timing` (above) | 0 repeated frames in 60 s (was 2) |
+| 2026-10-06 | DXGI presentation, setting `latency` (opt-in, above) | ~35 ms instead of ~48 where frames are on time; default unchanged |
 | 2026-10-06 | Pads read after the pacing sleep, one window poll per frame (engine-changes.md) | input age at present: mean 9.5 ms, p50 8.7 (was one full frame, ~16.7 ms, by construction); scripted fight pixel-identical at frame 2500; Escape still opens the menu |
 
 ## Known issue

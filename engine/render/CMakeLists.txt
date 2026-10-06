@@ -82,10 +82,15 @@ add_library(dream_render_vk STATIC
   src/vk/texture_cache.cpp
   src/vk/offscreen.cpp
   src/vk/present.cpp
+  src/vk/dxgi_present.cpp
 )
 add_dependencies(dream_render_vk dream_render_shaders)
 target_include_directories(dream_render_vk PUBLIC include PRIVATE ${_spv_dir})
 target_link_libraries(dream_render_vk PUBLIC dream::render Vulkan::Vulkan SDL3::SDL3)
+if(WIN32)
+  # dreamcomp: DXGI flip-model presentation (src/vk/dxgi_present.cpp).
+  target_link_libraries(dream_render_vk PRIVATE d3d11 dxgi)
+endif()
 dream_target_defaults(dream_render_vk)
 add_library(dream::render_vk ALIAS dream_render_vk)
 

@@ -265,7 +265,7 @@ public:
             if (eq != std::string::npos &&
                 (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
                  key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" || key == "volume" || key == "clip" ||
-                 key == "fps" || key == "frame_timing"))
+                 key == "fps" || key == "frame_timing" || key == "latency"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
         // The aspect flags decide the render target's shape, which the engine needs before it
@@ -304,6 +304,12 @@ public:
         // "exact" keeps the Dreamcast's 59.94 Hz.
         if (g_settings.get("frame_timing", "display") != "exact" && !has_flag(args, "--sync-display"))
             args.push_back("--sync-display");
+        // Latency (docs/PACING.md): "low" presents through DXGI on Windows (about 13 ms less where
+        // every frame is finished in time); "standard" (default) through the Vulkan swapchain.
+        if (g_settings.get("latency", "standard") == "low" && !has_flag(args, "--present-path")) {
+            args.push_back("--present-path");
+            args.push_back("dxgi");
+        }
 
         // For the in-game menu (wants_overlay()).
         config_path_ = flag_value(args, "--config");
