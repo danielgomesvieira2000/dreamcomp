@@ -1387,6 +1387,7 @@ void usage(const char* argv0, std::FILE* out) {
         "                         --mod providing a file wins; dreamcomp docs/MODS.md)\n"
         "  --rumble N             controller rumble strength, 0 (off) to 100 percent (default)\n"
         "  --volume N             master volume, 0 to 100 percent (default 100)\n"
+        "  --soft-clip            round loud peaks off instead of the console's hard clipping\n"
         "  --texture-pack DIR     replace textures with DIR/**/*_<hash>.png (with --window;\n"
         "                         dreamcomp docs/TEXTURE-PACKS.md)\n"
         "  --dump-textures DIR    write each distinct texture once as DIR/<w>x<h>_<fmt>_<hash>.png\n"
@@ -1505,6 +1506,7 @@ int main(int argc, char** argv) {
     std::vector<std::filesystem::path> mod_roots;
     int rumble_percent = 100;  // --rumble N (dreamcomp): pad rumble strength, 0 = off
     int volume_percent = 100;  // --volume N (dreamcomp): master output level
+    bool soft_clip = false;    // --soft-clip (dreamcomp): round loud peaks off instead of clipping
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
     bool interpolate_frames = false;      // --interpolate (dreamcomp): a blended frame between renders
     bool interpolate_auto = false;        // --interpolate-auto: only on displays above 60 Hz
@@ -1623,6 +1625,8 @@ int main(int argc, char** argv) {
             rumble_percent = std::clamp(std::atoi(argv[++i]), 0, 100);
         else if (!std::strcmp(argv[i], "--volume") && i + 1 < argc)
             volume_percent = std::clamp(std::atoi(argv[++i]), 0, 100);
+        else if (!std::strcmp(argv[i], "--soft-clip"))
+            soft_clip = true;
         else if (!std::strcmp(argv[i], "--vmu") && i + 1 < argc)
             vmu = argv[++i];
         else if (!std::strcmp(argv[i], "--dump-ta-frame") && i + 1 < argc)
@@ -2144,6 +2148,7 @@ int main(int argc, char** argv) {
             hc.set_volume = [&volume_percent](float v) {
                 volume_percent = static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 100.0f + 0.5f);
             };
+            hc.set_soft_clip = [&soft_clip](bool on) { soft_clip = on; };
         }
         if (rumble_percent != 100)
             std::printf("rumble: %d%%\n", rumble_percent);
@@ -2224,6 +2229,7 @@ int main(int argc, char** argv) {
     // AICA control block with the ARM7 that runs the title's sound driver from sound RAM
     // (WP2.5; no sound generation yet).
     dream::aica::Aica aica(sys.sched, sys.holly, sys.memory);
+    aica.mixer.soft_clip = &soft_clip;
     sys.memory.map_mmio(dream::aica::Aica::kRegBase, dream::aica::Aica::kRegEnd, &aica);
     // ARM7 program-counter histogram sampled once per 44.1 kHz tick (where the driver spends its
     // time), and the optional recording.

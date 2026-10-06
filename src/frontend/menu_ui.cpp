@@ -929,8 +929,16 @@ std::string MenuUi::tab_graphics() {
 }
 
 std::string MenuUi::tab_sound() {
-    return row_slider("volume", "Master volume", std::clamp(draft_.get_int("volume", 100), 0, 100),
-                      "The level of everything the game plays.", true);
+    std::string s = row_slider("volume", "Master volume",
+                               std::clamp(draft_.get_int("volume", 100), 0, 100),
+                               "The level of everything the game plays.", true);
+    s += row_radio("clip", "Loud sounds", {{"hard", "Original"}, {"soft", "Softened"}},
+                   draft_.get("clip", "hard"),
+                   "<b>Original</b> is the console's own output: its mix is loud, and the loudest "
+                   "hits clip, which you hear as crackle.<br/><br/><b>Softened</b> rounds those "
+                   "peaks off smoothly instead. Everything below them is unchanged.",
+                   true);
+    return s;
 }
 
 std::string MenuUi::tab_mods() {

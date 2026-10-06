@@ -33,7 +33,7 @@ in-game panel off.
 | General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), About (credits; opens the read-me) | rumble live; frame rate next start |
 | Controls | RecompFrontend's layout, below | bindings: at once |
 | Graphics | Resolution 1–8×, Aspect ratio (≤ `PortInfo::max_aspect`, only with `PortInfo::widescreen`), Fit to window, Fullscreen, Widescreen HUD, HUD layout (with `PortInfo::hud`) | fit, fullscreen, HUD live; resolution/aspect next start |
-| Sound | Master volume | live |
+| Sound | Master volume, Loud sounds (Original = the console's hard clipping / Softened = `--soft-clip`) | live |
 | Mods | Texture pack, Open texture folder, Dump textures, mods list (on/off, ▲▼ order, first wins), Open mods folder | next start |
 
 Option rows copy RecompFrontend's radio rows: the name, then every choice in a row; the selected
@@ -84,7 +84,7 @@ containers) in regions: launcher list; panel tab bar, rows, footer; dialog butto
 
 ## Settings keys
 
-`disc`, `scale`, `aspect`, `fit`, `fullscreen`, `fps`, `rumble`, `volume`, `hud_fix`,
+`disc`, `scale`, `aspect`, `fit`, `fullscreen`, `fps`, `rumble`, `volume`, `clip`, `hud_fix`,
 `hud_layout`, `texture_pack`, `dump_textures`, `mods` (ARCHITECTURE.md § Settings).
 
 ## How it is built

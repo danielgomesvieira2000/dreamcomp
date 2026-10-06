@@ -42,6 +42,10 @@ public:
 
     // Diagnostics
     std::uint64_t key_ons = 0, key_offs = 0, samples = 0, nonzero_samples = 0;
+    // Enhancement (dreamcomp), off unless pointed at a true flag: instead of the hardware's hard
+    // 16-bit clamp, peaks above -2.5 dBFS are rounded off smoothly, so a loud mix that clips
+    // (crackles) on the console sounds clean. Read every sample; owned by the launcher.
+    const bool* soft_clip = nullptr;
     unsigned active_channels() const noexcept;
     bool dsp_running() const noexcept { return !dsp_.stopped; }
 

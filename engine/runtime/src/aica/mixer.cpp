@@ -4,6 +4,7 @@
 #include "dream/runtime/aica/mixer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1164,6 +1165,19 @@ void Mixer::sample(std::int16_t& left, std::int16_t& right) {
     if (common->DAC18B) {
         mixl >>= 2;
         mixr >>= 2;
+    }
+    if (soft_clip && *soft_clip) {
+        // A smooth knee: unchanged below 24576, then tanh into the remaining headroom.
+        auto soften = [](s32 x) {
+            constexpr float kKnee = 24576.0f, kRange = 32767.0f - 24576.0f;
+            const float a = static_cast<float>(x < 0 ? -x : x);
+            if (a <= kKnee)
+                return x;
+            const float y = kKnee + kRange * std::tanh((a - kKnee) / kRange);
+            return static_cast<s32>(x < 0 ? -y : y);
+        };
+        mixl = soften(mixl);
+        mixr = soften(mixr);
     }
     mixl = std::clamp(mixl, -32768, 32767);
     mixr = std::clamp(mixr, -32768, 32767);

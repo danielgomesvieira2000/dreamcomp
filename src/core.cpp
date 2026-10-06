@@ -113,6 +113,8 @@ void add_input_and_mod_flags(std::vector<std::string>& args,
         args.push_back("--volume");
         args.push_back(std::to_string(std::clamp(g_settings.get_int("volume", 100), 0, 100)));
     }
+    if (!has_flag(args, "--soft-clip") && g_settings.get("clip", "hard") == "soft")
+        args.push_back("--soft-clip");
     if (has_flag(args, "--mod"))
         return;
     const std::string mods = g_settings.get("mods");
@@ -244,7 +246,7 @@ public:
             const std::string key = kv.substr(0, eq);
             if (eq != std::string::npos &&
                 (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
-                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" || key == "volume" ||
+                 key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" || key == "volume" || key == "clip" ||
                  key == "fps"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
@@ -586,6 +588,8 @@ public:
         if (hc.set_volume)
             hc.set_volume(static_cast<float>(std::clamp(g_settings.get_int("volume", 100), 0, 100)) /
                           100.0f);
+        if (hc.set_soft_clip)
+            hc.set_soft_clip(g_settings.get("clip", "hard") == "soft");
         if (hc.set_fullscreen && hc.fullscreen &&
             hc.fullscreen() != g_settings.get_bool("fullscreen", false))
             hc.set_fullscreen(g_settings.get_bool("fullscreen", false));
