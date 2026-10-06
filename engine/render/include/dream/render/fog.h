@@ -54,4 +54,9 @@ void describe_fog(const std::uint32_t* pvr_regs, FogSettings& out);
 // rather than a picture that looks slightly wrong.
 float fog_table_index(float density, float inv_w);
 
+// The table fog factor (0..1) for a depth, as Flycast's fog_mode2 samples its 128x2 fog texture
+// (dreamcomp): the entry the index lands on, blended from the high byte toward the low byte by
+// the mantissa's fraction.
+float fog_table_value(const FogSettings& fog, float inv_w);
+
 }  // namespace dream::render

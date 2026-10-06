@@ -95,3 +95,18 @@ TEST_CASE("fog: the table index is logarithmic in depth, sixteen entries per dou
     // Density scales depth before the lookup, so doubling it is one doubling of depth.
     CHECK(fog_table_index(2.0f, 1.0f) - fog_table_index(1.0f, 1.0f) == doctest::Approx(16.0f));
 }
+
+TEST_CASE("table fog blends an entry's high byte toward its low byte, as Flycast's fog texture") {
+    dream::render::FogSettings fog;
+    fog.density = 1.0f;
+    for (std::size_t i = 0; i < 128; ++i) {
+        fog.factor[i] = 200;  // high byte
+        fog.delta[i] = 100;   // low byte
+    }
+    // 1/w = 1: z = 1, exponent 0, mantissa 0 -> entry 0, fraction 0 -> the high byte.
+    CHECK(dream::render::fog_table_value(fog, 1.0f) == doctest::Approx(200.0f / 255.0f));
+    // z = 1.5: mantissa 8 exactly -> fraction 0 again.
+    CHECK(dream::render::fog_table_value(fog, 1.5f) == doctest::Approx(200.0f / 255.0f));
+    // z = 1.53125: mantissa 8.5 -> halfway to the low byte.
+    CHECK(dream::render::fog_table_value(fog, 1.53125f) == doctest::Approx(150.0f / 255.0f));
+}

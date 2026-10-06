@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +25,7 @@ namespace {
 // Vertex layout handed to the shaders: position (x, y, 1/w), texture coordinates, base colour and
 // offset colour as floats. Nine floats; unpacking the colours here keeps the shader simple and the
 // cost is a frame's worth of arithmetic on the CPU, which is nothing beside the draw calls.
-constexpr std::size_t kFloatsPerVertex = 3 + 2 + 4 + 4;
+constexpr std::size_t kFloatsPerVertex = 3 + 2 + 4 + 4 + 1;  // ... + table fog factor
 
 // ISP/TSP instruction word (Flycast's ISP_TSP union): the fields that decide pipeline state.
 constexpr std::uint32_t isp_depth_mode(std::uint32_t isp) {
@@ -95,7 +96,11 @@ struct PushConstants {
     float offset[2];
     std::int32_t mode;
     float alpha_ref;
+    float pad[2];       // the shader's vec4 members start on a 16-byte boundary
+    float fog_vert[4];  // FOG_COL_VERT (per-vertex fog), RGBA
+    float fog_ram[4];   // FOG_COL_RAM (table fog), RGBA
 };
+static_assert(offsetof(PushConstants, fog_vert) == 32, "push constants must match the shaders");
 
 // What identifies a texture within one frame: the control word, plus the TSP bits that carry the
 // size. Everything the sampler reads is decided per texture in prepare(), so it does not belong
@@ -231,11 +236,12 @@ VkPipeline Renderer::pipeline_for(const PipelineKey& key) {
     binding.binding = 0;
     binding.stride = static_cast<std::uint32_t>(kFloatsPerVertex * sizeof(float));
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    const std::array<VkVertexInputAttributeDescription, 4> attributes{{
+    const std::array<VkVertexInputAttributeDescription, 5> attributes{{
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
         {1, 0, VK_FORMAT_R32G32_SFLOAT, 3 * sizeof(float)},
         {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 5 * sizeof(float)},
         {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 9 * sizeof(float)},
+        {4, 0, VK_FORMAT_R32_SFLOAT, 13 * sizeof(float)},
     }};
     VkPipelineVertexInputStateCreateInfo vi{};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -379,6 +385,15 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         return;
 
     // Pack the vertices into the shader's layout.
+    // Table fog (FogCtrl 0 and 3) is evaluated per vertex from the hardware's table, only when
+    // some polygon uses it; the hardware does it per pixel, which this approximates.
+    bool table_fog = false;
+    for (const auto& list : frame.lists)
+        for (const Polygon& p : list) {
+            const std::uint32_t f = tsp_fog_control(p.tsp);
+            if (f == 0 || f == 3)
+                table_fog = true;
+        }
     staging_.resize(frame.vertices.size() * kFloatsPerVertex);
     float* out = staging_.data();
     for (const Vertex& v : frame.vertices) {
@@ -389,6 +404,7 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         out[4] = v.v;
         unpack_colour(v.base, out + 5);
         unpack_colour(v.offset, out + 9);
+        out[13] = table_fog ? fog_table_value(geometry.fog, v.z) : 0.0f;
         out += kFloatsPerVertex;
     }
     const VkDeviceSize bytes = staging_.size() * sizeof(float);
@@ -409,6 +425,13 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     push.offset[0] = -1.0f - 2.0f * geometry.left / geometry.width;
     push.offset[1] = -1.0f - 2.0f * geometry.top / geometry.height;
     (void)target;
+    // Fog colours: RGBA8888 with red in the low byte (fog.h).
+    for (int c = 0; c < 4; ++c) {
+        push.fog_vert[c] =
+            static_cast<float>((geometry.fog.vertex_colour >> (8 * c)) & 0xFFu) / 255.0f;
+        push.fog_ram[c] = static_cast<float>((geometry.fog.table_colour >> (8 * c)) & 0xFFu) / 255.0f;
+    }
+    const bool fog_off = std::getenv("DREAM_NO_FOG") != nullptr;
 
     const VkDeviceSize zero = 0;
     VkBuffer buffer = vertices_.handle();
@@ -514,6 +537,8 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         }
         if (tsp_use_alpha(p.tsp))
             push.mode |= 64;
+        // Fog control in bits 7-8 (2 = none).
+        push.mode |= static_cast<std::int32_t>((fog_off ? 2u : (tsp_fog_control(p.tsp) & 3u)) << 7);
         if (item.blended)
             ++blended_polygons;
         push.alpha_ref = geometry.alpha_ref;

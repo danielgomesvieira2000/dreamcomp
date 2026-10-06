@@ -61,4 +61,17 @@ float fog_table_index(float density, float inv_w) {
     return std::floor(m) + exponent * 16.0f;
 }
 
+float fog_table_value(const FogSettings& fog, float inv_w) {
+    const float z = std::clamp(fog.density * inv_w, 1.0f, 255.9999f);
+    const float exponent = std::floor(std::log2(z));
+    const float m = z * 16.0f / std::pow(2.0f, exponent) - 16.0f;
+    const int idx = std::clamp(static_cast<int>(std::floor(m) + exponent * 16.0f), 0, 127);
+    const float frac = m - std::floor(m);
+    // Flycast's texture: row 0 the low byte (`delta` here), row 1 the high byte (`factor`); the
+    // lookup's v = 0.75 - frac / 2 runs from row 1 at frac 0 to row 0 at frac 1.
+    const float hi = static_cast<float>(fog.factor[static_cast<std::size_t>(idx)]);
+    const float lo = static_cast<float>(fog.delta[static_cast<std::size_t>(idx)]);
+    return (hi + (lo - hi) * frac) / 255.0f;
+}
+
 }  // namespace dream::render

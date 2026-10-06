@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "dream/render/display_list.h"
+#include "dream/render/fog.h"
 #include "dream/render/vk/context.h"
 #include "dream/render/vk/resources.h"
 #include "dream/render/vk/texture_cache.h"
@@ -34,6 +35,8 @@ struct FrameGeometry {
     // depth with GREATER_EQUAL whatever its ISP word says, as Flycast does, so a layer drawn
     // exactly on an opaque surface is not rejected.
     bool autosort = true;
+    // Fog registers (dreamcomp): colours, density and the 128-entry table.
+    FogSettings fog;
 };
 
 class Renderer {

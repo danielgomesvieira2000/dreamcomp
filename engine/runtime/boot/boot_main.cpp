@@ -296,6 +296,7 @@ struct Live {
         // PT_ALPHA_REF: the punch-through threshold the guest chose, which changes per scene.
         geometry.alpha_ref = static_cast<float>(pvr_.reg(0x11C) & 0xFFu) / 255.0f;
         geometry.shadow_scale = static_cast<float>(pvr_.reg(0x074) & 0xFFu) / 256.0f;
+        dream::render::describe_fog(pvr_.reg_block(), geometry.fog);
         // Auto-sort: with FPU_PARAM_CFG bit 21 the region array's per-tile PreSort bit decides
         // (not read yet: games that use type-2 headers sort, as Soulcalibur's tiles all do);
         // otherwise ISP_FEED_CFG bit 0 clear means the hardware sorts.

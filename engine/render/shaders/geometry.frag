@@ -15,14 +15,18 @@ layout(push_constant) uniform Push {
     int mode;         // bit 0-1 shading instruction, 2 textured, 3 ignore texture alpha,
                       // 4 offset colour, 5 alpha test, 6 use alpha
     float alpha_ref;  // punch-through threshold, from the hardware's own register
+    vec4 fog_vert;    // FOG_COL_VERT: per-vertex fog blends toward it by the offset alpha
+    vec4 fog_ram;     // FOG_COL_RAM: table fog's colour
 }
 push;
+// mode bits 7-8: the TSP fog control (dreamcomp): 0 table, 1 per vertex, 2 none, 3 table alpha.
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
 
 layout(location = 0) in vec4 v_base;
 layout(location = 1) in vec4 v_offset;
 layout(location = 2) in vec3 v_uv;
+layout(location = 3) in float v_fog;
 
 layout(location = 0) out vec4 o_colour;
 
@@ -37,6 +41,11 @@ void main() {
     if ((push.mode & 64) == 0)
         base.a = 1.0;
     vec4 colour = base;
+    const int fog = (push.mode >> 7) & 3;
+    // As Flycast's shader: fog mode 3 replaces the colour with the fog colour and the table's
+    // factor as alpha, before the texture is applied.
+    if (fog == 3)
+        colour = vec4(push.fog_ram.rgb, v_fog);
 
     if ((push.mode & 4) != 0) {
         vec4 texel = texture(tex, v_uv.xy / inv_w);
@@ -55,6 +64,12 @@ void main() {
     }
     if ((push.mode & 16) != 0)
         colour.rgb += offset_colour.rgb;
+
+    // Fog after the colour is complete (Flycast shaders.cpp, after colorClamp).
+    if (fog == 0)
+        colour.rgb = mix(colour.rgb, push.fog_ram.rgb, clamp(v_fog, 0.0, 1.0));
+    else if (fog == 1 && (push.mode & 16) != 0)
+        colour.rgb = mix(colour.rgb, push.fog_vert.rgb, clamp(offset_colour.a, 0.0, 1.0));
 
     // Punch-through polygons are opaque geometry with holes in it: the hardware keeps or discards
     // a pixel outright rather than blending, so the list can be drawn with depth writes on and in
