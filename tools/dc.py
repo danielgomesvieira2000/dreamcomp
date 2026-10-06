@@ -254,6 +254,23 @@ def cmd_report(a) -> int:
     return run(launcher_args(info, extra), cwd=info["dir"], check=False, env=dict(os.environ))
 
 
+# Launcher flags whose value is a file or folder. `run` and `report` start the game in the port's
+# folder, so a relative path written from the dreamcomp checkout (as the skills do) would land
+# somewhere that does not exist, and the engine's "cannot write" is easy to miss: make such paths
+# absolute against the caller's directory first.
+FILE_FLAGS = {"--suggest-config", "--profile", "--wav", "--report", "--dump-ta", "--dump-vram",
+              "--dump-flash", "--dump-aram", "--sample-file", "--settings", "--vmu", "--bindings",
+              "--texture-pack", "--dump-textures", "--mod", "--disc", "--flash", "--capture-dir"}
+
+
+def absolute_file_args(extra):
+    out = list(extra)
+    for i in range(len(out) - 1):
+        if out[i] in FILE_FLAGS and not os.path.isabs(out[i + 1]):
+            out[i + 1] = os.path.abspath(out[i + 1])
+    return out
+
+
 def cmd_shots(a) -> int:
     info = port_info(a.port)
     out = os.path.abspath(a.out or os.path.join(info["dir"], "shots"))
@@ -326,7 +343,7 @@ def main(argv=None) -> int:
         cut = argv.index("--")
         argv, extra = argv[:cut], argv[cut + 1:]
     a = ap.parse_args(argv)
-    a.extra = extra
+    a.extra = absolute_file_args(extra)
     return a.fn(a)
 
 

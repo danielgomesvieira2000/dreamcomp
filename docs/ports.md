@@ -15,3 +15,16 @@ One section per port: paths, commands, keys, status. Skills read this instead of
 | Standard script | `--press start@600,start@900,a@1200,a@1260` → title, Arcade, Kilik, first fight (~frame 1700+) |
 | Port flags | `--widescreen` (anamorphic, Flycast value 0.75 at `0x8C266C28`) |
 | Status | boots, intro, menus, arcade fights across stages, saves; 2026-10-06 accuracy pass (HUD, shadows, fog, texture invalidation, tile clip, mipmaps) and performance pass; scenarios: `python tools/scenario.py boot|menus|fight|fight-long|attract` |
+
+## Jet Grind Radio (USA) — `jet-grind-radio-recomp`
+
+| | |
+|---|---|
+| Local repo | `ports/jet-grind-radio-recomp` (branch `main`; no GitHub remote yet) |
+| Disc | MK-51058 V1.005 (2000-10-02); boot `1ST_READ.BIN` 3,075,648 bytes, SHA-1 `dc0bda1431d97223885a22c68f7ddb3524757895` |
+| SDK | Shinobi 1.68, Ninja (Feb 2000), Kamui 1.11; CRI ADX/SJ middleware (streamed music) |
+| Build | `python tools/dc.py build ports/jet-grind-radio-recomp` → `build/game/jet-grind-radio-recomp.exe` |
+| Settings | `%APPDATA%\dreamcomp\jetgrindradio\settings.ini` |
+| Standard script | `--press start@600,start@900` → title flyby (~frame 2100), "PRESS START BUTTON" |
+| Not translated | `2_DP.BIN` (Dream Passport 2 browser for the online features) |
+| Status | boots to the title (2026-10-06); gameplay not reached yet; plan in the port's docs/PLAN.md |
