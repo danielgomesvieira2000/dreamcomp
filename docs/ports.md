@@ -27,4 +27,4 @@ One section per port: paths, commands, keys, status. Skills read this instead of
 | Settings | `%APPDATA%\dreamcomp\jetgrindradio\settings.ini` |
 | Standard script | `--press start@600,start@900` → title flyby (~frame 2100), "PRESS START BUTTON" |
 | Not translated | `2_DP.BIN` (Dream Passport 2 browser for the online features) |
-| Status | boots to the title (2026-10-06); gameplay not reached yet; plan in the port's docs/PLAN.md |
+| Status | 2026-10-06: boots, `scenario.py play --port jetgrindradio` reaches Gum's tutorial and skates the first street (0 untranslated / 0 unmapped); widescreen to 21:9 with the HUD corrected (polygon rule + one override); idle skip; translated = interpreted at attract frame 10040. Not yet: compared with Flycast, listened to by Daniel, played past the tutorial. Plan: the port's docs/PLAN.md |

@@ -67,3 +67,11 @@ Entry gate: met (boots to menus on the engine).
 ## P5 — Second title (Jet Grind Radio)
 
 Entry gate: P1 exit met; the port template extracted from Soulcalibur.
+
+| Item | Status |
+|---|---|
+| Survey, boot, gameplay (tutorial street) | done 2026-10-06 (port PLAN P0-P2) |
+| Shared idle skip `dreamcomp::IdleWait` (same Ninja vsync wait as Soulcalibur) | done 2026-10-06: -24 % game-thread CPU, bit-identical |
+| Widescreen 16:9 / 21:9, HUD rule for a polygon-drawn HUD | done 2026-10-06 (verified at 21:9 on play, boot, attract frames) |
+| Accuracy against Flycast (cel shading, outlines, graffiti, fog, shadows, audio) | not started: no Flycast build on this machine; translated vs interpreted identical where checked |
+| Daniel playtest | not started |
