@@ -1597,6 +1597,8 @@ void usage(const char* argv0, std::FILE* out) {
         "  --capture-at N         write a full frame capture at the Nth (F11 by hand)\n"
         "  --wav FILE             record the audio as 16-bit stereo 44.1 kHz\n"
         "  --sample N             sample the CPU every N cycles (--sample-file FILE)\n"
+        "  --profile FILE         sample the game thread's host call stacks (~1 kHz) into FILE;\n"
+        "                         tools/profile.py names them (--profile-interval US)\n"
         "\n"
         "Finding where two runs diverged (docs/differential-harness.md):\n"
         "  --write-hash FILE      a rolling hash of every guest write, one line per frame\n"
@@ -1623,6 +1625,20 @@ void install_crash_handler();
 // Sleeps until `t` within a fraction of a millisecond (dreamcomp; Windows: a high-resolution
 // waitable timer, where std::this_thread::sleep_until wakes 1-3 ms late). Defined at the end.
 void precise_sleep_until(std::chrono::steady_clock::time_point t);
+// The rate clock's sleep, kept out of line so a --profile capture can tell sleeping from working.
+#ifdef _MSC_VER
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+static void pacing_sleep_until(std::chrono::steady_clock::time_point t) {
+    std::this_thread::sleep_until(t);
+}
+// Host sampling profiler (dreamcomp, --profile FILE): samples the calling thread's call stack about
+// every `interval_us` until host_profiler_stop(), which writes FILE (tools/profile.py names the
+// frames). Windows only for now; elsewhere it says so and does nothing. Defined at the end.
+void host_profiler_start(const std::string& file, unsigned interval_us);
+void host_profiler_stop();
 
 int main(int argc, char** argv) {
     install_crash_handler();
@@ -1643,6 +1659,8 @@ int main(int argc, char** argv) {
         argv = ext_argv.data();
     }
     std::string config, report, sample_file, dump;
+    std::string profile_file;          // --profile FILE (dreamcomp): host sampling profiler
+    unsigned profile_interval_us = 1000;  // --profile-interval US
     bool stop_on_ta = false;
     // No limit unless one is asked for. A run that stops on its own after a number of frames
     // nobody chose is indistinguishable from a crash, and the flag is right there for the runs
@@ -1764,6 +1782,10 @@ int main(int argc, char** argv) {
             dump = argv[++i];
         else if (!std::strcmp(argv[i], "--sample-file") && i + 1 < argc)
             sample_file = argv[++i];
+        else if (!std::strcmp(argv[i], "--profile") && i + 1 < argc)
+            profile_file = argv[++i];
+        else if (!std::strcmp(argv[i], "--profile-interval") && i + 1 < argc)
+            profile_interval_us = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--sample") && i + 1 < argc)
             sample_every = std::strtoull(argv[++i], nullptr, 0);
         else if (!std::strcmp(argv[i], "--interpret"))
@@ -2521,7 +2543,7 @@ int main(int argc, char** argv) {
                 else
                     due += step;
                 if (due > now) {
-                    std::this_thread::sleep_until(due);
+                    pacing_sleep_until(due);
                     live->pacing.slept(due);
                 }
             }
@@ -2799,6 +2821,15 @@ int main(int argc, char** argv) {
     for (auto* e : dream::host::extensions()) e->on_start(sys);
     const auto t0 = std::chrono::steady_clock::now();
     auto run_title = [&] {
+    if (!profile_file.empty())
+        host_profiler_start(profile_file, profile_interval_us);
+    struct ProfileStop {
+        bool on;
+        ~ProfileStop() {
+            if (on)
+                host_profiler_stop();
+        }
+    } profile_stop{!profile_file.empty()};
     try {
 #ifdef DREAM_DEV_INTERPRETER
         if (interpret_all) {
@@ -3236,7 +3267,7 @@ void install_crash_handler() {
     SetUnhandledExceptionFilter(on_crash);
 }
 
-void precise_sleep_until(std::chrono::steady_clock::time_point t) {
+__declspec(noinline) void precise_sleep_until(std::chrono::steady_clock::time_point t) {
     // One high-resolution timer per thread (Windows 10 1803+); without one, plain sleep.
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -3271,10 +3302,160 @@ void precise_sleep_until(std::chrono::steady_clock::time_point t) {
     else
         std::this_thread::sleep_until(t);
 }
+// ---- host sampling profiler (dreamcomp) ------------------------------------------------------
+// A sampler thread suspends the game thread about every `interval`, reads its registers, walks its
+// stack with the x64 unwind tables (every non-leaf function has them, generated code included) and
+// resumes it. Nothing is allocated while the thread is suspended: it may hold the heap lock. Stacks
+// are aggregated as module-relative frames and written at stop as
+//     <count> <module>+<offset>;<module>+<offset>;...      (innermost frame first)
+// after a "module <name> <size>" line per module seen.
+namespace {
+struct HostProfiler {
+    HANDLE thread = nullptr, sampler = nullptr;
+    std::atomic<bool> stop{false};
+    unsigned interval_us = 1000;
+    std::string file;
+    std::unordered_map<std::string, std::uint64_t> stacks;  // "frames" -> count
+    std::uint64_t samples = 0, failed = 0;
+    std::chrono::steady_clock::time_point started;
+};
+HostProfiler* g_prof = nullptr;
+
+std::string module_frame(DWORD64 pc, std::unordered_map<DWORD64, std::string>& names) {
+    HMODULE mod = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(pc), &mod) || !mod) {
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "?+%llx", static_cast<unsigned long long>(pc));
+        return buf;
+    }
+    const DWORD64 base = reinterpret_cast<DWORD64>(mod);
+    auto it = names.find(base);
+    if (it == names.end()) {
+        wchar_t wpath[MAX_PATH] = {};
+        GetModuleFileNameW(mod, wpath, MAX_PATH);
+        const wchar_t* slash = std::wcsrchr(wpath, L'\\');
+        char name[MAX_PATH] = {};
+        WideCharToMultiByte(CP_UTF8, 0, slash ? slash + 1 : wpath, -1, name, MAX_PATH - 1, nullptr, nullptr);
+        it = names.emplace(base, name).first;
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "+%llx", static_cast<unsigned long long>(pc - base));
+    return it->second + buf;
+}
+
+DWORD WINAPI sampler_main(void*) {
+    HostProfiler& p = *g_prof;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    constexpr int kMaxFrames = 64;
+    DWORD64 pcs[kMaxFrames];
+    std::unordered_map<DWORD64, std::string> names;
+    std::string key;
+    while (!p.stop.load()) {
+        LARGE_INTEGER due;
+        due.QuadPart = -static_cast<LONGLONG>(p.interval_us) * 10;
+        if (timer && SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0))
+            WaitForSingleObject(timer, INFINITE);
+        else
+            Sleep(1);
+        if (SuspendThread(p.thread) == static_cast<DWORD>(-1)) {
+            ++p.failed;
+            continue;
+        }
+        int n = 0;
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+        // GetThreadContext also waits for the suspension to take effect.
+        if (GetThreadContext(p.thread, &ctx)) {
+            while (n < kMaxFrames && ctx.Rip) {
+                pcs[n++] = ctx.Rip;
+                DWORD64 image = 0;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &image, nullptr);
+                if (!fn) {
+                    // A leaf function: the return address is on top of the stack.
+                    ctx.Rip = *reinterpret_cast<DWORD64*>(ctx.Rsp);
+                    ctx.Rsp += 8;
+                    continue;
+                }
+                void* handler_data = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, fn, &ctx, &handler_data, &frame, nullptr);
+            }
+        }
+        ResumeThread(p.thread);
+        if (n == 0) {
+            ++p.failed;
+            continue;
+        }
+        // Resumed: now it is safe to allocate.
+        key.clear();
+        for (int i = 0; i < n; ++i) {
+            if (i)
+                key += ';';
+            key += module_frame(pcs[i], names);
+        }
+        ++p.stacks[key];
+        ++p.samples;
+    }
+    if (timer)
+        CloseHandle(timer);
+    return 0;
+}
+}  // namespace
+
+void host_profiler_start(const std::string& file, unsigned interval_us) {
+    if (g_prof)
+        return;
+    g_prof = new HostProfiler;
+    g_prof->file = file;
+    g_prof->interval_us = std::max(100u, interval_us);
+    g_prof->started = std::chrono::steady_clock::now();
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_prof->thread,
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+    g_prof->sampler = CreateThread(nullptr, 0, sampler_main, nullptr, 0, nullptr);
+    std::printf("profile: sampling the game thread every %u us into %s\n", g_prof->interval_us,
+                file.c_str());
+}
+
+void host_profiler_stop() {
+    if (!g_prof)
+        return;
+    HostProfiler& p = *g_prof;
+    p.stop = true;
+    if (p.sampler) {
+        WaitForSingleObject(p.sampler, INFINITE);
+        CloseHandle(p.sampler);
+    }
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - p.started).count();
+    if (FILE* f = std::fopen(p.file.c_str(), "w")) {
+        std::fprintf(f, "# dreamcomp host profile: %llu samples over %.2f s, interval %u us, %llu failed\n",
+                     static_cast<unsigned long long>(p.samples), secs, p.interval_us,
+                     static_cast<unsigned long long>(p.failed));
+        for (const auto& [stack, count] : p.stacks)
+            std::fprintf(f, "%llu %s\n", static_cast<unsigned long long>(count), stack.c_str());
+        std::fclose(f);
+    }
+    std::printf("profile: %llu samples (%.0f per second, %llu failed) written to %s\n",
+                static_cast<unsigned long long>(p.samples), secs > 0 ? static_cast<double>(p.samples) / secs : 0.0,
+                static_cast<unsigned long long>(p.failed), p.file.c_str());
+    if (p.thread)
+        CloseHandle(p.thread);
+    delete g_prof;
+    g_prof = nullptr;
+}
 #else
 void install_crash_handler() {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
 }
+void host_profiler_start(const std::string&, unsigned) {
+    std::printf("profile: --profile is only implemented on Windows so far\n");
+}
+void host_profiler_stop() {}
 void precise_sleep_until(std::chrono::steady_clock::time_point t) {
     std::this_thread::sleep_until(t);
 }
