@@ -31,6 +31,7 @@ separate git repos in `ports/<slug>/`. Start with `docs/ARCHITECTURE.md` and `do
 | Build / run / look | `/dc-playtest`; `python tools/dc.py build|run|report|shots <port>` |
 | Bug | `/dc-investigate`; traps first: `docs/playbook/README.md` |
 | Widescreen, textures, mods, fps | `/dc-enhance`; hooks: `docs/HOOKS.md` |
+| HUD element anchors (F1 editor, promote) | `/dc-hud`; `docs/HUD.md` |
 | Engine upstream sync | `/dc-engine-sync` |
 | Audit / release | `/dc-audit`, `/dc-release` (release only when asked) |
 | End of session | `/dc-retro` |

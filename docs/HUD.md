@@ -21,6 +21,23 @@ With the Original aspect ratio there is nothing to correct: the HUD is exactly t
 `DREAMCOMP_NO_HUD_FIX=1` shows the stretched HUD, for an A/B. The launch report prints how many primitives
 were corrected.
 
+## Overrides and the F1 editor (2026-10-06)
+
+What the heuristic gets wrong is fixed per element, without code:
+
+| Piece | Where |
+|---|---|
+| Override | `rect=x0,y0,x1,y1 anchor=left\|center\|right\|stretch\|auto [tcw=0x..,0x..]`, one per line: a rectangle in the console's 640x480 coordinates *before* correction (holds at any window shape), the texture words of the element's pieces (none: any). A flat piece whose centre is in the rectangle and whose texture is listed is forced into the HUD with that anchor (`auto`: by thirds), or left stretched. Later lines win. |
+| Files | the port's `game/hud_overrides.ini` beside `<id>.toml` (loaded first, shipped), then the player's `<settings dir>/hud_overrides.ini`. Log line `dreamcomp: HUD overrides: N from the port, M from the player`. |
+| Editor | **F1** in game (src/frontend/hud_editor.cpp, in the overlay; the engine's binding screen no longer opens on F1). Outlines per element: **L** blue, **C** green, **R** red, **S** yellow (stretched), `*` overridden; grey: flat 2D pieces left alone. Left click cycles left > centre > right > stretched, right click back to automatic, a click on grey adds the piece; P moves the panel, S saves the player's file. Works with Original too (shows where elements would anchor; nothing moves). |
+| Promotion | `python tools/hud_promote.py <slug>`: merges the player's file into the port's, empties the player's (`.bak` kept). Skill `/dc-hud`. |
+| Code | `include/dreamcomp/hud.h`, `src/hud.cpp` (`hud::correct`: classification, overrides, grouping, anchoring, snapshot), `Core::on_frame` / `hud_edit` / `hud_save` (src/core.cpp), unit tests `src/tests/test_hud.cpp` (target `dreamcomp_hud_tests`). |
+
+Verified 2026-10-06: the move into src/hud.cpp is pixel-identical (fight frame 2500, character
+select, all 14 attract shots); scripted F1 session: outlines on every fight element, a click set
+Kilik's group (health bar, name, STAGE 1, clock) to centre, save wrote it, promotion into the port
+was loaded back (`1 from the port`). Not yet tried by Daniel with a real mouse.
+
 ## How a primitive is classified
 
 A display-list primitive is HUD when all hold:

@@ -9,6 +9,8 @@
 #include <functional>
 #include <string>
 
+#include "dreamcomp/hud.h"
+
 namespace dreamcomp {
 
 class Settings;
@@ -47,6 +49,13 @@ struct OverlayContext {
     std::filesystem::path config, exe_dir;
     std::string version;
     std::function<void()> applied;  // after Apply: re-read the settings that apply live
+    // The F1 HUD editor (docs/HUD.md). hud_watch starts/stops the per-frame snapshots,
+    // hud_snapshot copies the newest (false: none yet); hud_edit and hud_save must be called on
+    // the game thread (the overlay posts them).
+    std::function<void(bool)> hud_watch;
+    std::function<bool(hud::Snapshot&)> hud_snapshot;
+    std::function<void(const hud::Box&, hud::Edit)> hud_edit;
+    std::function<void()> hud_save;
 };
 
 class Overlay {

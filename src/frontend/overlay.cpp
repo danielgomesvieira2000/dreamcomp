@@ -1,7 +1,8 @@
 // The frontend menu over the running game (docs/FRONTEND.md): MenuUi in InGame mode, drawn by
 // the CPU renderer (soft_render.h) into an RGBA image that the engine blends over the game on the
 // GPU (Extension::overlay_image), or composites into the frame for a test screenshot. Escape or a
-// pad's Select/Back opens and closes it; the game keeps running.
+// pad's Select/Back opens and closes it; the game keeps running. F1 opens the HUD editor
+// (hud_editor.h) in the same overlay instead of the engine's binding screen.
 //
 // Threads: everything RmlUi does -- input, layout, rasterising -- runs on the overlay's own worker
 // thread, so a redraw (10-15 ms at window size) never holds up a game frame. The game thread
@@ -30,6 +31,7 @@
 #include "dreamcomp/frontend.h"
 #include "dreamcomp/settings.h"
 #include "frontend_common.h"
+#include "hud_editor.h"
 #include "menu_ui.h"
 #include "soft_render.h"
 
@@ -86,9 +88,7 @@ struct Image {
 bool consumed_while_open(const SDL_Event& ev) {
     switch (ev.type) {
     case SDL_EVENT_KEY_DOWN:
-        // F1 is the engine's binding screen, Alt+Enter the window's fullscreen toggle.
-        if (ev.key.key == SDLK_F1)
-            return false;
+        // Alt+Enter is the window's fullscreen toggle. (F1 is the overlay's: the HUD editor.)
         if (ev.key.key == SDLK_RETURN && (ev.key.mod & SDL_KMOD_ALT))
             return false;
         return true;
@@ -119,11 +119,12 @@ struct Overlay::Impl {
     std::vector<std::function<void()>> guest_actions;  // run on the game thread
     DrawMode want;
     Image front;
-    bool want_open = false, stop = false;
+    bool want_open = false, want_hud = false, stop = false;
     std::uint64_t vblank_frame = 0;
     bool shot_pending = false;
     std::string pending_shot;
     std::atomic<bool> open{false};
+    std::atomic<bool> hud_mode{false};  // the HUD editor (F1) rather than the menu
 
     // ---- game thread only ------------------------------------------------------------------------
     Image shown;
@@ -135,6 +136,7 @@ struct Overlay::Impl {
     std::unique_ptr<OverlaySystem> system;
     std::unique_ptr<SoftRenderer> soft;
     std::unique_ptr<MenuUi> ui;
+    std::unique_ptr<HudEditor> hud;
     Rml::Context* context = nullptr;
     unsigned fw = 0, fh = 0, vis_x = 0, vis_y = 0, vis_w = 0, vis_h = 0;
     float draw_w = 0, draw_h = 0, draw_x = 0, draw_y = 0;  // the frame's rectangle, window pixels
@@ -201,11 +203,13 @@ struct Overlay::Impl {
                 break;
             std::deque<SDL_Event> evs;
             evs.swap(events);
-            const bool do_open = want_open;
-            want_open = false;
+            const bool do_open = want_open, do_hud = want_hud;
+            want_open = want_hud = false;
             const DrawMode mode = want;
             const std::uint64_t frame = vblank_frame;
             lock.unlock();
+            if (do_hud)
+                open_hud();
             work(evs, do_open, mode, frame);
             lock.lock();
         }
@@ -225,10 +229,16 @@ struct Overlay::Impl {
             return;
         for (const SDL_Event& ev : evs) {
             const unsigned wid = ev.type == SDL_EVENT_MOUSE_MOTION ? ev.motion.windowID : 0;
-            if (ui->handle(ev, [this, wid](float x, float y, float& cx, float& cy) {
-                    return map(x, y, wid, cx, cy);
-                }))
+            auto mouse = [this, wid](float x, float y, float& cx, float& cy) {
+                return map(x, y, wid, cx, cy);
+            };
+            if (hud_mode.load()) {
+                hud->handle(ev, mouse);
+            } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F1 && !ev.key.repeat) {
+                open_hud();  // from the menu straight to the HUD editor
+            } else if (ui->handle(ev, mouse)) {
                 need_render = true;
+            }
             if (!open.load())
                 return;  // closed by this event
         }
@@ -242,8 +252,15 @@ struct Overlay::Impl {
             laid_out = mode;
             need_render = true;
         }
-        ui->tick();
-        if (!ui->take_redraw() && !need_render)
+        bool redraw = need_render;
+        if (hud_mode.load()) {
+            hud->tick();
+            redraw |= hud->take_redraw();
+        } else {
+            ui->tick();
+            redraw |= ui->take_redraw();
+        }
+        if (!redraw)
             return;
         const std::uint64_t t0 = SDL_GetTicksNS();
         context->Update();
@@ -332,7 +349,29 @@ struct Overlay::Impl {
             failed = true;
             return false;
         }
+        hud = std::make_unique<HudEditor>(
+            ctx, [this](std::function<void()> f) { post(std::move(f)); }, [this] { close(); });
+        if (!hud->load(context, &err)) {
+            std::fprintf(stderr, "overlay: %s\n", err.c_str());
+            hud.reset();
+        }
         return true;
+    }
+
+    // The HUD editor (F1): the menu's page hidden, the editor's shown, over the running game.
+    void open_hud() {
+        if (!init() || !hud) {
+            open = false;
+            hud_mode = false;
+            return;
+        }
+        open = true;
+        hud_mode = true;
+        ui->set_visible(false);
+        hud->show();
+        need_render = true;
+        laid_out = DrawMode{};
+        std::printf("overlay: HUD editor open\n");
     }
 
     void open_menu() {
@@ -353,6 +392,11 @@ struct Overlay::Impl {
     }
 
     void close() {
+        if (hud_mode.exchange(false) && hud) {
+            hud->hide();
+            if (ui)
+                ui->set_visible(true);
+        }
         if (!open.exchange(false))
             return;
         std::printf("overlay: closed\n");
@@ -382,6 +426,8 @@ struct Overlay::Impl {
         draw_h = static_cast<float>(vh);
         context->SetDimensions(Rml::Vector2i(static_cast<int>(vw), static_cast<int>(vh)));
         context->SetDensityIndependentPixelRatio(static_cast<float>(vh) / 720.0f);
+        if (hud)
+            hud->set_window(static_cast<float>(vw), static_cast<float>(vh));
     }
 
     // The part of the frame the window shows, as the presenter fits it (present.cpp).
@@ -417,6 +463,9 @@ struct Overlay::Impl {
         vis_y = (h - vis_h) / 2;
         context->SetDimensions(Rml::Vector2i(static_cast<int>(vis_w), static_cast<int>(vis_h)));
         context->SetDensityIndependentPixelRatio(static_cast<float>(vis_h) / 720.0f);
+        if (hud)  // the context is the visible part of the frame, which is the picture
+            hud->set_frame(-static_cast<float>(vis_x), -static_cast<float>(vis_y),
+                           static_cast<float>(fw), static_cast<float>(fh));
     }
 
     // One scripted input every 150 ms: keys and pad buttons go into SDL's queue, so they take the
@@ -454,7 +503,9 @@ struct Overlay::Impl {
             return;
         }
         if (k.rfind("click:", 0) == 0) {
-            Rml::Element* el = showing ? ui->element(k.substr(6)) : nullptr;
+            Rml::Element* el = !showing ? nullptr
+                               : hud_mode.load() && hud ? hud->element(k.substr(6))
+                                                        : ui->element(k.substr(6));
             if (!el || draw_w <= 0)
                 return;
             const Rml::Vector2f pos = el->GetAbsoluteOffset(Rml::BoxArea::Border);
@@ -506,6 +557,20 @@ struct Overlay::Impl {
 
     // ---- game thread -----------------------------------------------------------------------------
     bool on_event(const SDL_Event& ev) {
+        if (!open.load() && ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F1 && !ev.key.repeat) {
+            // F1: the HUD editor (it used to be the engine's binding screen; the Controls tab
+            // edits bindings now). Consumed, so the engine never sees it.
+            std::printf("overlay: HUD editor opened by F1\n");
+            open = true;
+            shown = Image{};
+            {
+                std::lock_guard<std::mutex> lock(q);
+                want_hud = true;
+                events.clear();
+            }
+            cv.notify_one();
+            return true;
+        }
         if (!open.load()) {
             const bool esc = ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE &&
                              !ev.key.repeat;

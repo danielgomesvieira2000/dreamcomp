@@ -19,7 +19,7 @@ Paths, exe names and keys: `DC/docs/ports.md` for this port. Do not guess.
 
 `python DC/tools/dc.py run DC/ports/<slug> --window` in the background. Say exactly what was
 launched and with which flags, and tell him in one sentence what to do. Keys: arrows d-pad,
-Z X A S = A B X Y, Enter Start, Q/W triggers, F1 bindings, F10 FPS, F11 capture, F12 screenshot.
+Z X A S = A B X Y, Enter Start, Q/W triggers, F1 HUD editor (/dc-hud), F10 FPS, F11 capture, F12 screenshot.
 Never leave altered values in his settings file: test-only choices go in flags (`--set`), which
 are not saved unless `--save-settings`.
 

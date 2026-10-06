@@ -14,6 +14,8 @@
 //   --launcher-size WxH              the launcher window's size (default 1280x720)
 // Settings it turns into engine flags: texture_pack, dump_textures (docs/TEXTURE-PACKS.md),
 // rumble (--rumble), mods (--mod, docs/MODS.md), aspect, fullscreen, scale.
+#include <atomic>
+#include <mutex>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -28,6 +30,7 @@
 #include "dream/runtime/host_ext.h"
 #include "dream/runtime/system.h"
 #include "dreamcomp/port.h"
+#include "dreamcomp/hud.h"
 #include "dreamcomp/settings.h"
 
 #include "dreamcomp/frontend.h"
@@ -314,6 +317,12 @@ public:
         // For the in-game menu (wants_overlay()).
         config_path_ = flag_value(args, "--config");
         exe_dir_ = exe_dir(args[0]);
+        // HUD overrides: the port's beside its config, the player's beside the settings.
+        if (!config_path_.empty())
+            hud_port_file_ = config_path_.parent_path() / "hud_overrides.ini";
+        if (!g_settings.file().empty())
+            hud_user_file_ = g_settings.file().parent_path() / "hud_overrides.ini";
+        load_hud_overrides();
 
         if (!has_flag(args, "--disc")) {
             const std::string disc = g_settings.get("disc");
@@ -496,121 +505,115 @@ public:
             g_port->on_vblank(sys, g_settings);
     }
 
-    // Widescreen HUD correction (PortInfo::hud, docs/HUD.md). Setting `hud_fix` (default on)
-    // turns it off for an A/B. Counts are reported at exit.
+    // Widescreen HUD correction (PortInfo::hud, docs/HUD.md, src/hud.cpp) with the port's and the
+    // player's overrides. While the F1 editor watches, every frame also leaves a snapshot of the
+    // HUD for it -- with a 4:3 picture too, where nothing is moved.
     void on_frame(dream::render::Frame& frame) override {
-        if (!g_port || !g_port->hud.enabled || !widescreen() || !hud_fix_)
+        if (!g_port || !g_port->hud.enabled)
             return;
-        const auto& rule = g_port->hud;
-        const float k = (4.0f / 3.0f) / target_aspect();  // < 1: squeeze back
-        // Pass 1: depth of every flat sprite, and how many sprites share each depth.
-        auto flat_z = [&](const dream::render::Polygon& p, float& z) {
-            const std::uint32_t type = p.pcw >> 29;  // 5 sprite, 4 polygon
-            if (p.count == 0 || (type != 5u && !(rule.polygons && type == 4u)))
-                return false;
-            z = frame.vertices[p.first].z;
-            for (std::uint32_t i = 1; i < p.count; ++i)
-                if (frame.vertices[p.first + i].z != z)
-                    return false;
-            return true;
-        };
-        depth_counts_.clear();
-        depth_cover_.clear();
-        for (const auto& list : frame.lists)
-            for (const auto& p : list) {
-                float z;
-                if (!flat_z(p, z))
-                    continue;
-                ++depth_counts_[z];
-                float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
-                for (std::uint32_t i = 0; i < p.count; ++i) {
-                    const auto& v = frame.vertices[p.first + i];
-                    x0 = std::min(x0, v.x);
-                    x1 = std::max(x1, v.x);
-                    y0 = std::min(y0, v.y);
-                    y1 = std::max(y1, v.y);
+        const bool watching = hud_watch_.load(std::memory_order_relaxed);
+        const bool apply = widescreen() && hud_fix_;
+        if (!apply && !watching)
+            return;
+        hud::Snapshot snap;
+        hud::Stats stats;
+        hud::correct(frame, g_port->hud, apply ? target_aspect() : 4.0f / 3.0f, hud_edges_, apply,
+                     hud_overrides_, watching ? &snap : nullptr, stats);
+        hud_corrected_ += stats.corrected;
+        if (!watching)
+            return;
+        snap.image_aspect = widescreen() ? target_aspect() : 4.0f / 3.0f;
+        snap.frame = vblanks_;
+        snap.port_overrides = hud_port_overrides_.items.size();
+        snap.user_overrides = hud_user_overrides_.items.size();
+        snap.unsaved = hud_unsaved_;
+        snap.status = hud_status_;
+        snap.user_file = hud_user_file_.string();
+        std::lock_guard<std::mutex> lock(hud_mutex_);
+        hud_snapshot_ = std::move(snap);
+        hud_snapshot_ready_ = true;
+    }
+
+    // --- HUD overrides (game thread) ---
+    void load_hud_overrides() {
+        hud_port_overrides_.items.clear();
+        hud_user_overrides_.items.clear();
+        std::string err;
+        if (!hud_port_file_.empty() && !hud_port_overrides_.load(hud_port_file_, &err))
+            std::fprintf(stderr, "dreamcomp: %s\n", err.c_str());
+        err.clear();
+        if (!hud_user_file_.empty() && !hud_user_overrides_.load(hud_user_file_, &err))
+            std::fprintf(stderr, "dreamcomp: %s\n", err.c_str());
+        rebuild_hud_overrides();
+        if (!hud_overrides_.items.empty())
+            std::printf("dreamcomp: HUD overrides: %zu from the port, %zu from the player\n",
+                        hud_port_overrides_.items.size(), hud_user_overrides_.items.size());
+    }
+    void rebuild_hud_overrides() {
+        hud_overrides_.items = hud_port_overrides_.items;
+        hud_overrides_.items.insert(hud_overrides_.items.end(), hud_user_overrides_.items.begin(),
+                                    hud_user_overrides_.items.end());
+    }
+    // The player's override for `box`: the one that decided it if that is the player's, else a
+    // new one covering the element (2 px of slack) and its textures.
+    hud::Override& user_override_for(const hud::Box& box) {
+        const int port_n = static_cast<int>(hud_port_overrides_.items.size());
+        if (box.override_index >= port_n &&
+            box.override_index - port_n < static_cast<int>(hud_user_overrides_.items.size()))
+            return hud_user_overrides_.items[static_cast<std::size_t>(box.override_index - port_n)];
+        hud::Override o;
+        o.x0 = std::floor(box.ox0) - 2.0f;
+        o.y0 = std::floor(box.oy0) - 2.0f;
+        o.x1 = std::ceil(box.ox1) + 2.0f;
+        o.y1 = std::ceil(box.oy1) + 2.0f;
+        o.tcws = box.tcws;
+        hud_user_overrides_.items.push_back(std::move(o));
+        return hud_user_overrides_.items.back();
+    }
+    void hud_edit(const hud::Box& box, hud::Edit edit) {
+        using hud::Anchor;
+        const int port_n = static_cast<int>(hud_port_overrides_.items.size());
+        switch (edit) {
+            case hud::Edit::Cycle: {
+                const Anchor next = box.anchor == Anchor::Left     ? Anchor::Center
+                                    : box.anchor == Anchor::Center ? Anchor::Right
+                                    : box.anchor == Anchor::Right  ? Anchor::Stretch
+                                                                   : Anchor::Left;
+                user_override_for(box).anchor = next;
+                hud_status_ = std::string("element set to ") + hud::name(next);
+                break;
+            }
+            case hud::Edit::Add:
+                user_override_for(box).anchor = Anchor::Auto;
+                hud_status_ = "piece added to the HUD (automatic anchor)";
+                break;
+            case hud::Edit::Reset:
+                if (box.override_index >= port_n) {
+                    hud_user_overrides_.items.erase(hud_user_overrides_.items.begin() +
+                                                    (box.override_index - port_n));
+                    hud_status_ = "override removed";
+                } else if (box.override_index >= 0) {
+                    user_override_for(hud::Box{box}).anchor = Anchor::Auto;  // masks the port's
+                    hud_status_ = "port override masked: automatic anchor";
+                } else {
+                    hud_status_ = "nothing to reset: this element is automatic";
+                    return;
                 }
-                depth_cover_[z] += (x1 - x0) * (y1 - y0);
-            }
-        const float backdrop_area = rule.backdrop_cover * 640.0f * 480.0f;
-        // Pass 2: the HUD primitives and their horizontal extents.
-        hud_items_.clear();
-        for (auto& list : frame.lists) {
-            for (const auto& p : list) {
-                float z;
-                if (!flat_z(p, z))
-                    continue;
-                if (z < rule.overlay_z && depth_counts_[z] < rule.min_shared)
-                    continue;
-                if (depth_cover_[z] > backdrop_area)
-                    continue;
-                HudItem it{&p, 1e30f, -1e30f, 1e30f, -1e30f};
-                for (std::uint32_t i = 0; i < p.count; ++i) {
-                    const auto& v = frame.vertices[p.first + i];
-                    it.x0 = std::min(it.x0, v.x);
-                    it.x1 = std::max(it.x1, v.x);
-                    it.y0 = std::min(it.y0, v.y);
-                    it.y1 = std::max(it.y1, v.y);
-                }
-                if (it.x1 - it.x0 > rule.full_width)
-                    continue;
-                hud_items_.push_back(it);
-            }
+                break;
         }
-        // Layout `center`: the whole HUD scaled about the screen centre (its original 4:3 layout).
-        // Layout `edges` (default): sprites that touch horizontally and overlap vertically form one
-        // element (a health bar is a cap, a bar and a cap); each element is un-stretched about the
-        // edge of the screen third its centre falls in (the screen's left edge, centre or right
-        // edge), so each region keeps its console spacing at any width.
-        const std::size_t n = hud_items_.size();
-        hud_group_.resize(n);
-        for (std::size_t i = 0; i < n; ++i) hud_group_[i] = i;
-        auto root = [&](std::size_t i) {
-            while (hud_group_[i] != i) i = hud_group_[i] = hud_group_[hud_group_[i]];
-            return i;
-        };
-        if (hud_edges_) {
-            // Touching pieces (gap <= 3 px, overlapping rows) are one element; so are pieces of
-            // one text line -- same top and bottom within 4 px -- across word gaps up to 1.5x
-            // their height, so "INSERT COIN" moves as one. A bar beside taller timer digits has a
-            // different extent and stays separate.
-            constexpr float kTouch = 3.0f, kSameRow = 4.0f;
-            for (std::size_t i = 0; i < n; ++i)
-                for (std::size_t j = i + 1; j < n; ++j) {
-                    const auto& a = hud_items_[i];
-                    const auto& b = hud_items_[j];
-                    const float gap = std::max(a.x0, b.x0) - std::min(a.x1, b.x1);
-                    const bool rows_overlap = a.y0 <= b.y1 && b.y0 <= a.y1;
-                    const bool same_line = std::abs(a.y0 - b.y0) <= kSameRow &&
-                                           std::abs(a.y1 - b.y1) <= kSameRow;
-                    const float line_gap = 1.5f * std::max(a.y1 - a.y0, b.y1 - b.y0);
-                    if ((rows_overlap && gap <= kTouch) || (same_line && gap <= line_gap))
-                        hud_group_[root(i)] = root(j);
-                }
-        }
-        group_x0_.assign(n, 1e30f);
-        group_x1_.assign(n, -1e30f);
-        for (std::size_t i = 0; i < n; ++i) {
-            const std::size_t r = root(i);
-            group_x0_[r] = std::min(group_x0_[r], hud_items_[i].x0);
-            group_x1_[r] = std::max(group_x1_[r], hud_items_[i].x1);
-        }
-        for (std::size_t i = 0; i < n; ++i) {
-            float anchor = 320.0f;
-            if (hud_edges_) {
-                const std::size_t r = root(i);
-                const float cx = 0.5f * (group_x0_[r] + group_x1_[r]);
-                // About the screen edge of its third, not its own edge: an element keeps its 4:3
-                // distance from the left or right edge (or from the centre), so a row such as
-                // "STAGE 1  0'09\"07" stays together at any width instead of drifting apart.
-                anchor = cx < 640.0f / 3.0f ? 0.0f : cx > 1280.0f / 3.0f ? 640.0f : 320.0f;
-            }
-            const auto& p = *hud_items_[i].poly;
-            for (std::uint32_t v = 0; v < p.count; ++v) {
-                auto& vx = frame.vertices[p.first + v];
-                vx.x = anchor + (vx.x - anchor) * k;
-            }
-            ++hud_corrected_;
+        hud_unsaved_ = true;
+        rebuild_hud_overrides();
+    }
+    void hud_save() {
+        std::string err;
+        if (hud_user_overrides_.save(hud_user_file_, &err)) {
+            hud_unsaved_ = false;
+            hud_status_ = "saved " + std::to_string(hud_user_overrides_.items.size()) +
+                          " override(s); tools/hud_promote.py moves them into the port";
+            std::printf("dreamcomp: HUD overrides saved to %s\n", hud_user_file_.string().c_str());
+        } else {
+            hud_status_ = "save failed: " + err;
+            std::fprintf(stderr, "dreamcomp: %s\n", err.c_str());
         }
     }
 
@@ -628,6 +631,18 @@ public:
             oc.exe_dir = exe_dir_;
             oc.version = version_line();
             oc.applied = [this] { apply_live(); };
+            // The F1 HUD editor (src/frontend/hud_editor.cpp). hud_edit and hud_save are run on
+            // the game thread by the overlay (posted), the snapshot is handed over under a mutex.
+            oc.hud_watch = [this](bool on) { hud_watch_ = on; };
+            oc.hud_snapshot = [this](hud::Snapshot& out) {
+                std::lock_guard<std::mutex> lock(hud_mutex_);
+                if (!hud_snapshot_ready_)
+                    return false;
+                out = hud_snapshot_;
+                return true;
+            };
+            oc.hud_edit = [this](const hud::Box& box, hud::Edit edit) { hud_edit(box, edit); };
+            oc.hud_save = [this] { hud_save(); };
             overlay_ = std::make_unique<frontend::Overlay>(oc);
         }
         return true;
@@ -717,16 +732,16 @@ private:
     bool hud_fix_ = true, hud_edges_ = true;
     float settle_aspect_ = 0.0f;
     unsigned settle_ = 0;
-    struct HudItem {
-        const dream::render::Polygon* poly;
-        float x0, x1, y0, y1;
-    };
-    std::vector<HudItem> hud_items_;
-    std::vector<std::size_t> hud_group_;
-    std::vector<float> group_x0_, group_x1_;
-    std::unordered_map<float, unsigned> depth_counts_;
-    std::unordered_map<float, float> depth_cover_;  // screen area of the flat pieces at each depth
     std::uint64_t hud_corrected_ = 0;
+    // HUD overrides: the port's (read only), the player's (edited with F1), and both in order.
+    hud::Overrides hud_port_overrides_, hud_user_overrides_, hud_overrides_;
+    std::filesystem::path hud_port_file_, hud_user_file_;
+    bool hud_unsaved_ = false;
+    std::string hud_status_;
+    std::atomic<bool> hud_watch_{false};
+    std::mutex hud_mutex_;  // hud_snapshot_ for the overlay thread
+    hud::Snapshot hud_snapshot_;
+    bool hud_snapshot_ready_ = false;
     bool launch_dirty_ = false;
 };
 

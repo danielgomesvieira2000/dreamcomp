@@ -1691,6 +1691,16 @@ void MenuUi::tick() {
         rebuild();
 }
 
+void MenuUi::set_visible(bool on) {
+    if (!doc_)
+        return;
+    if (on)
+        doc_->Show();
+    else
+        doc_->Hide();
+    redraw_ = true;
+}
+
 bool MenuUi::script_event(const std::string& k, SDL_Event& e) {
     e = SDL_Event{};
     if (k.rfind("pad:", 0) == 0) {
@@ -1721,6 +1731,9 @@ bool MenuUi::script_event(const std::string& k, SDL_Event& e) {
                              : k == "right" ? SDLK_RIGHT
                              : k == "enter" ? SDLK_RETURN
                              : k == "esc"   ? SDLK_ESCAPE
+                             : k == "f1"    ? SDLK_F1
+                             : k == "s"     ? SDLK_S
+                             : k == "p"     ? SDLK_P
                              : k == "tab"   ? SDLK_TAB
                              : k == "q"     ? SDLK_Q
                              : k == "e"     ? SDLK_E

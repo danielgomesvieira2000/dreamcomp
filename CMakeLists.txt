@@ -29,7 +29,7 @@ include(cmake/DreamcompPort.cmake)
 
 # The dreamcomp layer linked into every port executable. An OBJECT library, because its
 # extensions register themselves from static constructors that a static library would drop.
-add_library(dreamcomp_core OBJECT src/core.cpp src/settings.cpp)
+add_library(dreamcomp_core OBJECT src/core.cpp src/settings.cpp src/hud.cpp)
 target_include_directories(dreamcomp_core PUBLIC ${DREAMCOMP_ROOT}/include)
 target_link_libraries(dreamcomp_core PUBLIC dream::runtime dream::render)
 target_compile_features(dreamcomp_core PUBLIC cxx_std_20)
@@ -61,4 +61,13 @@ if(TARGET dream_render)
   target_link_libraries(dreamcomp_ta_dump PRIVATE dream::render)
   add_executable(dreamcomp_ta_match tools/native/ta_match.cpp)
   target_link_libraries(dreamcomp_ta_match PRIVATE dream::render)
+endif()
+
+# HUD correction and overrides on synthetic frames (not part of `all`):
+#   cmake --build <build> --target dreamcomp_hud_tests && <build>/dreamcomp/dreamcomp_hud_tests <scratch dir>
+if(TARGET dream_render)
+  add_executable(dreamcomp_hud_tests EXCLUDE_FROM_ALL src/tests/test_hud.cpp src/hud.cpp)
+  target_include_directories(dreamcomp_hud_tests PRIVATE ${DREAMCOMP_ROOT}/include)
+  target_link_libraries(dreamcomp_hud_tests PRIVATE dream::render)
+  target_compile_features(dreamcomp_hud_tests PRIVATE cxx_std_20)
 endif()

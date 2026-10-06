@@ -129,6 +129,7 @@ add_library(dreamcomp_frontend STATIC
   ${DREAMCOMP_ROOT}/src/frontend/launcher.cpp
   ${DREAMCOMP_ROOT}/src/frontend/menu_ui.cpp
   ${DREAMCOMP_ROOT}/src/frontend/overlay.cpp
+  ${DREAMCOMP_ROOT}/src/frontend/hud_editor.cpp
   ${DREAMCOMP_ROOT}/src/frontend/soft_render.cpp
   ${DREAMCOMP_ROOT}/src/frontend/launcher_model.cpp
   ${DREAMCOMP_ROOT}/src/frontend/sdl_image_shim.cpp

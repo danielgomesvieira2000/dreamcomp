@@ -69,6 +69,8 @@ public:
     static std::vector<std::string> all_screens();
     std::string screen_name() const;
     void open_panel(const std::string& tab = {});  // empty: the last tab used
+    // The page itself, hidden while the HUD editor (F1) shares the overlay.
+    void set_visible(bool on);
     bool panel_open() const noexcept { return panel_; }
 
     using MouseMap = std::function<bool(float wx, float wy, float& cx, float& cy)>;

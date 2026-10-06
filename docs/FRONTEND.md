@@ -21,8 +21,9 @@ style, reproduced in dreamcomp's own RML/RCSS; none of RecompFrontend's files ar
 
 In game: **Escape** or a pad's **Select/Back** opens and closes the panel (on the tab used last,
 General at first). **The game keeps running**; while the panel is open the keyboard and pads drive
-the panel and the game sees its buttons released. Start stays the game's. F1 still opens the
-engine's binding screen. Escape no longer quits; Quit Game (confirmed) or closing the window does,
+the panel and the game sees its buttons released. Start stays the game's. **F1** opens the HUD
+editor (docs/HUD.md: per-element anchors over the running game) in the same overlay; it no longer
+opens the engine's binding screen. Escape no longer quits; Quit Game (confirmed) or closing the window does,
 through the normal stop path (report, settings, memory card). `DREAMCOMP_NO_OVERLAY=1` turns the
 in-game panel off.
 
@@ -72,7 +73,8 @@ Escape, a pad's Select, or a click elsewhere cancels. Changes are written to the
 once (the engine's per-user `bindings.txt`, or `--bindings`) and the running game reloads it
 (`HostControls::reload_bindings`). No Apply, as in RecompFrontend. Bindings are per device type, not
 per player: every controller uses the controller profile. The menu keys (Escape / Select) are fixed.
-The engine's F1 binding screen still exists and edits the first boxes.
+The engine's own binding screen is no longer reachable from F1 (the HUD editor took the key);
+the Controls tab covers everything it did.
 
 ### Input
 

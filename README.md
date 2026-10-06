@@ -60,7 +60,7 @@ images may be `.cue` (Redump), `.gdi` or `.chd`.
 Started with no arguments, a port's executable opens a window with the saved settings. Settings
 live in `%APPDATA%\dreamcomp\<port>\settings.ini` (macOS: Application Support, Linux:
 `~/.config`). In the window: arrows = d-pad, Z X A S = A B X Y, Enter = Start, Q W = triggers,
-F1 = controller bindings, F10 = FPS, F11 = frame capture, F12 = screenshot.
+F1 = HUD editor (anchors per element), F10 = FPS, F11 = frame capture, F12 = screenshot.
 
 ## Documentation
 
