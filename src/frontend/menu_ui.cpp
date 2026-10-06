@@ -908,19 +908,18 @@ std::string MenuUi::tab_graphics() {
                    "Borderless fullscreen on the window's display. Alt+Enter switches at any time.",
                    true);
     if (cfg_.port && cfg_.port->hud.enabled) {
-        const bool hud = draft_.get_bool("hud_fix", true);
-        const bool wide = draft_aspect() > 4.0f / 3.0f + 0.01f;
-        s += row_onoff("hud_fix", "Widescreen HUD", hud,
-                       "Keeps the 2D HUD in its original proportions when the picture is wider "
-                       "than 4:3.",
-                       true);
+        // With Expanded the HUD is never stretched; this only says where it sits.
+        const bool wide = draft_expanded();
         s += row_radio("hud_layout", "HUD layout",
-                       {{"edges", "Screen edges"}, {"center", "Centered 4:3"}},
-                       draft_.get("hud_layout", "edges"),
-                       "<b>Screen edges</b> keeps health bars and names at the edges of a wide "
-                       "screen. <b>Centered 4:3</b> keeps the original layout in the middle.<br/>"
-                       "<br/>Needs Widescreen HUD on and a wide aspect ratio.",
-                       true, {hud && wide, hud && wide});
+                       {{"center", "Original"}, {"edges", "Expanded"}},
+                       draft_.get("hud_layout", "edges") == "center" ? "center" : "edges",
+                       "How the HUD sits on a widened picture. It always keeps its original "
+                       "proportions.<br/><br/><b>Original</b> keeps the whole HUD in the 4:3 area "
+                       "in the middle of the screen, as the console showed it.<br/><br/><b>Expanded"
+                       "</b> anchors each part to its side: health bars and names to the left and "
+                       "right edges, the timer in the centre, at any width.<br/><br/>Only with the "
+                       "Expanded aspect ratio.",
+                       true, {wide, wide});
     }
     return s;
 }

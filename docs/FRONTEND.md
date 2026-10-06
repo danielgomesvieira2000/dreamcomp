@@ -32,7 +32,7 @@ in-game panel off.
 |---|---|---|
 | General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), About (credits; opens the read-me) | rumble live; frame rate next start |
 | Controls | RecompFrontend's layout, below | bindings: at once |
-| Graphics | Resolution 1–8×, Aspect ratio (Original / Expanded, as in the N64 recomps; Expanded only with `PortInfo::widescreen`), Window mode, Widescreen HUD, HUD layout (with `PortInfo::hud`) | aspect, window mode, HUD live; resolution next start |
+| Graphics | Resolution 1–8×, Aspect ratio (Original / Expanded, as in the N64 recomps; Expanded only with `PortInfo::widescreen`), Window mode, HUD layout (Original = 4:3 centred / Expanded = anchored to the edges; never stretched; with `PortInfo::hud`) | aspect, window mode, HUD live; resolution next start |
 
 **Aspect ratio.** `aspect = original`: the console's 4:3 picture, black bars when the window is
 wider or taller, never stretched. `aspect = expanded`: the game's view is widened to the window's

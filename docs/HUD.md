@@ -5,16 +5,20 @@
 Ports with anamorphic widescreen (`PortInfo::widescreen`) draw their 2D HUD in the guest's
 640x480 screen space, so the horizontal stretch that widens the 3D view also widens the HUD.
 With `PortInfo::hud.enabled`, HUD primitives are un-stretched each frame so they keep their
-original proportions. Setting `hud_layout`:
+original proportions -- always, with the Expanded aspect ratio (Daniel's rule: a widened picture
+never stretches the HUD; there is no on/off setting). Setting `hud_layout` (menu: HUD layout):
 
-- `edges` (default): HUD sprites are grouped into elements -- pieces that touch, and glyphs of one
-  text line (same top/bottom within 4 px, word gaps up to 1.5x the text height) -- and each
-  element is un-stretched about the edge of the screen third its centre falls in: health bars and
-  names stay at the screen edges, the timer stays centred.
-- `center`: the whole HUD is scaled about the screen centre, i.e. the original 4:3 layout,
-  centred.
+- `edges` (menu "Expanded", default): HUD sprites are grouped into elements -- pieces that touch,
+  and glyphs of one text line -- and each element keeps its 4:3 distance from the screen edge of
+  the third its centre falls in: left third from the left edge, right third from the right edge,
+  middle third from the centre. Health bars and names sit at the screen edges, the timer stays
+  centred, and a row such as "STAGE 1  0'09"07" stays together at any width (it drifted apart
+  when elements were un-stretched about their own edges, fixed 2026-10-06).
+- `center` (menu "Original"): the whole HUD is scaled about the screen centre, i.e. the original
+  4:3 layout, centred.
 
-`hud_fix = false` (or `--set hud_fix=false`) turns the correction off for an A/B. The launch report prints how many primitives
+With the Original aspect ratio there is nothing to correct: the HUD is exactly the console's.
+`DREAMCOMP_NO_HUD_FIX=1` shows the stretched HUD, for an A/B. The launch report prints how many primitives
 were corrected.
 
 ## How a primitive is classified

@@ -433,7 +433,9 @@ public:
         // Settings changed by flags this run are not saved unless asked: a test run must not
         // leave its choices behind in the player's file.
         launch_dirty_ = g_settings.dirty();
-        hud_fix_ = g_settings.get_bool("hud_fix", true);
+        // Always on: a widened picture never stretches the HUD (Daniel's rule).
+        // DREAMCOMP_NO_HUD_FIX=1 shows the stretched HUD, for comparison.
+        hud_fix_ = std::getenv("DREAMCOMP_NO_HUD_FIX") == nullptr;
         hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
         apply_presentation();
         if (g_port && g_port->on_start)
@@ -532,7 +534,8 @@ public:
         // Layout `center`: the whole HUD scaled about the screen centre (its original 4:3 layout).
         // Layout `edges` (default): sprites that touch horizontally and overlap vertically form one
         // element (a health bar is a cap, a bar and a cap); each element is un-stretched about the
-        // edge of the screen third its centre falls in, so bars stay at the screen edges.
+        // edge of the screen third its centre falls in (the screen's left edge, centre or right
+        // edge), so each region keeps its console spacing at any width.
         const std::size_t n = hud_items_.size();
         hud_group_.resize(n);
         for (std::size_t i = 0; i < n; ++i) hud_group_[i] = i;
@@ -571,7 +574,10 @@ public:
             if (hud_edges_) {
                 const std::size_t r = root(i);
                 const float cx = 0.5f * (group_x0_[r] + group_x1_[r]);
-                anchor = cx < 640.0f / 3.0f ? group_x0_[r] : cx > 1280.0f / 3.0f ? group_x1_[r] : 320.0f;
+                // About the screen edge of its third, not its own edge: an element keeps its 4:3
+                // distance from the left or right edge (or from the centre), so a row such as
+                // "STAGE 1  0'09\"07" stays together at any width instead of drifting apart.
+                anchor = cx < 640.0f / 3.0f ? 0.0f : cx > 1280.0f / 3.0f ? 640.0f : 320.0f;
             }
             const auto& p = *hud_items_[i].poly;
             for (std::uint32_t v = 0; v < p.count; ++v) {
@@ -626,7 +632,9 @@ public:
     // After Apply in the in-game menu: what can change without a restart does so now (fit, HUD,
     // rumble, fullscreen). Everything else is marked "Next start" in the menu.
     void apply_live() {
-        hud_fix_ = g_settings.get_bool("hud_fix", true);
+        // Always on: a widened picture never stretches the HUD (Daniel's rule).
+        // DREAMCOMP_NO_HUD_FIX=1 shows the stretched HUD, for comparison.
+        hud_fix_ = std::getenv("DREAMCOMP_NO_HUD_FIX") == nullptr;
         hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
         apply_presentation();
         auto& hc = dream::host::host_controls();
