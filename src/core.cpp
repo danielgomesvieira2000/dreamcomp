@@ -494,7 +494,8 @@ public:
         const float k = (4.0f / 3.0f) / target_aspect();  // < 1: squeeze back
         // Pass 1: depth of every flat sprite, and how many sprites share each depth.
         auto flat_z = [&](const dream::render::Polygon& p, float& z) {
-            if ((p.pcw >> 29) != 5u || p.count == 0)
+            const std::uint32_t type = p.pcw >> 29;  // 5 sprite, 4 polygon
+            if (p.count == 0 || (type != 5u && !(rule.polygons && type == 4u)))
                 return false;
             z = frame.vertices[p.first].z;
             for (std::uint32_t i = 1; i < p.count; ++i)
@@ -503,12 +504,24 @@ public:
             return true;
         };
         depth_counts_.clear();
+        depth_cover_.clear();
         for (const auto& list : frame.lists)
             for (const auto& p : list) {
                 float z;
-                if (flat_z(p, z))
-                    ++depth_counts_[z];
+                if (!flat_z(p, z))
+                    continue;
+                ++depth_counts_[z];
+                float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+                for (std::uint32_t i = 0; i < p.count; ++i) {
+                    const auto& v = frame.vertices[p.first + i];
+                    x0 = std::min(x0, v.x);
+                    x1 = std::max(x1, v.x);
+                    y0 = std::min(y0, v.y);
+                    y1 = std::max(y1, v.y);
+                }
+                depth_cover_[z] += (x1 - x0) * (y1 - y0);
             }
+        const float backdrop_area = rule.backdrop_cover * 640.0f * 480.0f;
         // Pass 2: the HUD primitives and their horizontal extents.
         hud_items_.clear();
         for (auto& list : frame.lists) {
@@ -517,6 +530,8 @@ public:
                 if (!flat_z(p, z))
                     continue;
                 if (z < rule.overlay_z && depth_counts_[z] < rule.min_shared)
+                    continue;
+                if (depth_cover_[z] > backdrop_area)
                     continue;
                 HudItem it{&p, 1e30f, -1e30f, 1e30f, -1e30f};
                 for (std::uint32_t i = 0; i < p.count; ++i) {
@@ -699,6 +714,7 @@ private:
     std::vector<std::size_t> hud_group_;
     std::vector<float> group_x0_, group_x1_;
     std::unordered_map<float, unsigned> depth_counts_;
+    std::unordered_map<float, float> depth_cover_;  // screen area of the flat pieces at each depth
     std::uint64_t hud_corrected_ = 0;
     bool launch_dirty_ = false;
 };

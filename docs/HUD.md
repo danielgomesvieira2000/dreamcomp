@@ -25,17 +25,29 @@ were corrected.
 
 A display-list primitive is HUD when all hold:
 
-1. it is a TA **sprite** (PCW para type 5),
+1. it is a TA **sprite** (PCW para type 5), or a polygon (type 4) when `polygons` is set,
 2. all its vertices share one depth (1/w),
 3. another sprite in the same frame has exactly that depth (`min_shared`, default 2), or its depth
    is ≥ `overlay_z` (default 1000),
-4. it is not wider than `full_width` (default 600 px): full-screen fades and flashes stay full width.
+4. it is not wider than `full_width` (default 600 px): full-screen fades and flashes stay full width,
+5. the flat pieces at its depth do not together cover more than `backdrop_cover` (default 0.6) of
+   the 640x480 screen (summed bounding boxes): tiled full-screen backdrops keep filling the picture.
 
 Why rule 3: games draw their 2D layers at a common depth, while 3D sprites (particles, billboards)
 are projected individually and land at distinct depths. Measured on Soulcalibur (17 fight frames,
 `dreamcomp_ta_dump` + a cluster script): HUD sprites share 1/w values that move with the scene
 (0.113-0.207) plus an overlay layer at 2000; particle sprites reach 0.41, so a plain depth
 threshold would misfire, but every particle was a singleton.
+
+Soulcalibur sets `polygons = true` and `overlay_z = 1.0` (2026-10-06). Character select draws its
+portraits and frames as flat type-4 polygons at 1/w 0.5 and 0.7 (shared), with the selected
+portrait at 3 and its frame at 5.01 (each alone); with sprites only they stayed stretched and the
+frames slid off the pictures. No 3D geometry in its fights came closer than about 0.3. The
+attract-mode character intros then lost their full-screen backdrops (tiled flat polygons squeezed
+into 4:3 with black bars), hence rule 5. Checked with `tools/scenario.py`: fight frame 2500
+pixel-identical to before, character select aligned in both layouts, attract backdrops full
+width; the namco logo is now un-stretched; some light streaks in the sword scene are squeezed
+toward the centre (still reaching both edges).
 
 ## Mechanism (to reuse elsewhere)
 
@@ -53,5 +65,5 @@ threshold would misfire, but every particle was a singleton.
 - Edge grouping is a heuristic: in Soulcalibur the round clock is grouped apart from "STAGE 1"
   and anchors to the centre. Exact per-element anchoring (and overrides) belongs in an in-game
   inspector like Daniel's N64 ports (select an element, choose left/centre/right).
-- A 2D element drawn as polygons instead of sprites is not corrected (none seen in Soulcalibur
-  fights).
+- With `polygons`, a 3D scene that draws flat polygons at a shared depth (a wall facing the
+  camera head-on) would be squeezed; not seen in Soulcalibur's fights, attract or menus.

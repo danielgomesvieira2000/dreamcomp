@@ -50,6 +50,13 @@ struct PortInfo {
         unsigned min_shared = 2;      // sprites at one depth for that depth to count as a 2D layer
         float overlay_z = 1000.0f;    // 1/w at or above this is always a 2D overlay
         float full_width = 600.0f;    // wider than this: a fade or flash covering the screen; left
+        // Flat polygons too, not only sprites (dreamcomp): some 2D screens draw their pieces as
+        // ordinary polygons at one depth (Soulcalibur's character select portraits).
+        bool polygons = false;
+        // A depth whose flat pieces together cover more than this share of the 640x480 screen is
+        // a backdrop (tiled full-screen art, e.g. Soulcalibur's attract-mode character intros),
+        // not HUD; it is left to fill the widened picture (dreamcomp).
+        float backdrop_cover = 0.6f;
     };
     HudRule hud;
 
