@@ -25,6 +25,13 @@ public:
     // development feature must see every store (write hash, watch, replay journal).
     std::uint8_t* fast_ram = nullptr;
     bool fast_stores = false;
+    // Store-queue fast path (dreamcomp): the 2 x 8 words of the SQ buffers, word (a >> 2) & 15 for
+    // a store to 0xE0000000-0xE3FFFFFF. Set and cleared with `fast_stores`. Games build their TA
+    // display lists through the store queues -- 3.5 million stores a second in a Soulcalibur
+    // fight, 96 % of the stores that missed the RAM path -- and each went through the virtual slow
+    // path and the general address decoder to copy 4 bytes.
+    std::uint32_t* fast_sq = nullptr;
+    static constexpr bool is_sq(std::uint32_t a) noexcept { return (a & 0xFC000000u) == 0xE0000000u; }
     static constexpr bool is_ram(std::uint32_t a) noexcept {
         // Area 3 through P0-P3 only: P4 (0xE0000000 up) is never RAM, whatever its bits say.
         return (a & 0x1C000000u) == 0x0C000000u && a < 0xE0000000u;
@@ -79,6 +86,13 @@ private:
         if (fast_stores && is_ram(a) && o <= 0x01000000u - sizeof(T)) {
             std::memcpy(fast_ram + o, &v, sizeof(T));
             return;
+        }
+        if constexpr (sizeof(T) == 4 || sizeof(T) == 8) {
+            // A word into its slot, a double word (8-byte aligned) into two, as the slow path does.
+            if (fast_sq && is_sq(a) && (sizeof(T) == 4 || (a & 7u) == 0)) {
+                std::memcpy(fast_sq + ((a >> 2) & 15u), &v, sizeof(T));
+                return;
+            }
         }
         (this->*slow)(a, v);
     }

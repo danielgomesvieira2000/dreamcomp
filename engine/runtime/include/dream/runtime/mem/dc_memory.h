@@ -243,6 +243,7 @@ public:
         }();
         fast_ram = disabled ? nullptr : ram_.get();
         fast_stores = fast_ram && !journaling && !hash_writes && !(on_watch_write && watch_lo < watch_hi);
+        fast_sq = fast_stores ? &sq_[0][0] : nullptr;
     }
     void set_journaling(bool on) noexcept {
         journaling = on;
