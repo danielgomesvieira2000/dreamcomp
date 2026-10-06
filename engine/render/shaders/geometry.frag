@@ -17,6 +17,7 @@ layout(push_constant) uniform Push {
     float alpha_ref;  // punch-through threshold, from the hardware's own register
     vec4 fog_vert;    // FOG_COL_VERT: per-vertex fog blends toward it by the offset alpha
     vec4 fog_ram;     // FOG_COL_RAM: table fog's colour
+    vec4 clip;        // mode bit 9: discard inside this rectangle (user tile clip mode 3)
 }
 push;
 // mode bits 7-8: the TSP fog control (dreamcomp): 0 table, 1 per vertex, 2 none, 3 table alpha.
@@ -31,6 +32,9 @@ layout(location = 3) in float v_fog;
 layout(location = 0) out vec4 o_colour;
 
 void main() {
+    if ((push.mode & 512) != 0 && gl_FragCoord.x >= push.clip.x && gl_FragCoord.x < push.clip.z &&
+        gl_FragCoord.y >= push.clip.y && gl_FragCoord.y < push.clip.w)
+        discard;
     const float inv_w = v_uv.z;
     vec4 base = v_base / inv_w;
     vec4 offset_colour = v_offset / inv_w;

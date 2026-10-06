@@ -53,6 +53,10 @@ struct Polygon {
     // Second volume, for two-volume polygons; 0xFFFFFFFF when unused.
     std::uint32_t tsp1 = 0xFFFFFFFFu, tcw1 = 0xFFFFFFFFu;
     std::uint32_t tile_clip = 0;  // user tile clip mode, from the parameter control word
+    // The user clip rectangle in force for this polygon, in guest pixels (dreamcomp): the last
+    // user-tile-clip parameter's tiles, 32 pixels each, inclusive. Mode 2 draws only inside it,
+    // mode 3 only outside (Flycast tileclip / drawer SetTileClip).
+    std::uint16_t clip_x0 = 0, clip_y0 = 0, clip_x1 = 1280, clip_y1 = 480;
 };
 
 // A modifier volume triangle (shadows and volume effects). These are not strips: each is three
@@ -130,6 +134,7 @@ private:
     bool header_active_ = false;
     std::uint32_t modifier_headers_ = 0;
     bool modifier_last_ = false, modifier_translucent_ = false;
+    std::uint16_t clip_x0_ = 0, clip_y0_ = 0, clip_x1_ = 1280, clip_y1_ = 480;
     Pending pending_ = Pending::None;
     std::uint32_t held_[8]{};  // first half of a 64-byte parameter
 

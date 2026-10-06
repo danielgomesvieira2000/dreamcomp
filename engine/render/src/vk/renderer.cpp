@@ -99,6 +99,7 @@ struct PushConstants {
     float pad[2];       // the shader's vec4 members start on a 16-byte boundary
     float fog_vert[4];  // FOG_COL_VERT (per-vertex fog), RGBA
     float fog_ram[4];   // FOG_COL_RAM (table fog), RGBA
+    float clip[4];      // user clip mode 3: discard inside this rectangle (target pixels)
 };
 static_assert(offsetof(PushConstants, fog_vert) == 32, "push constants must match the shaders");
 
@@ -424,7 +425,6 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     push.scale[1] = 2.0f / geometry.height;
     push.offset[0] = -1.0f - 2.0f * geometry.left / geometry.width;
     push.offset[1] = -1.0f - 2.0f * geometry.top / geometry.height;
-    (void)target;
     // Fog colours: RGBA8888 with red in the low byte (fog.h).
     for (int c = 0; c < 4; ++c) {
         push.fog_vert[c] =
@@ -474,6 +474,26 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     std::stable_sort(items.begin() + static_cast<std::ptrdiff_t>(translucent_start), items.end(),
                      [](const Item& a, const Item& b) { return a.depth < b.depth; });
 
+    // User tile clip (dreamcomp, as Flycast's SetTileClip): mode 2 scissors to the rectangle,
+    // mode 3 discards inside it in the shader. Guest pixels to the target's.
+    const float sx = static_cast<float>(target.width) / geometry.width;
+    const float sy = static_cast<float>(target.height) / geometry.height;
+    const VkRect2D full_scissor{{0, 0}, target};
+    VkRect2D scissor_now = full_scissor;
+    auto clip_rect = [&](const Polygon& p) {
+        const float x0 = std::max(0.0f, (static_cast<float>(p.clip_x0) - geometry.left) * sx);
+        const float y0 = std::max(0.0f, (static_cast<float>(p.clip_y0) - geometry.top) * sy);
+        const float x1 = std::min(static_cast<float>(target.width),
+                                  (static_cast<float>(p.clip_x1) - geometry.left) * sx);
+        const float y1 = std::min(static_cast<float>(target.height),
+                                  (static_cast<float>(p.clip_y1) - geometry.top) * sy);
+        VkRect2D r{};
+        r.offset = {static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)};
+        r.extent = {static_cast<std::uint32_t>(std::max(0.0f, x1 - x0)),
+                    static_cast<std::uint32_t>(std::max(0.0f, y1 - y0))};
+        return r;
+    };
+    const bool clip_off = std::getenv("DREAM_NO_TILE_CLIP") != nullptr;
     VkPipeline bound = VK_NULL_HANDLE;
     modifier_triangles = 0;
     bool volumes_drawn = false;
@@ -481,6 +501,11 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         const Item& item = items[index];
         if (!volumes_drawn && index == translucent_start) {
             // After the opaque and punch-through lists, before the translucent one (Flycast).
+            if (scissor_now.extent.width != target.width || scissor_now.extent.height != target.height ||
+                scissor_now.offset.x != 0 || scissor_now.offset.y != 0) {
+                vkCmdSetScissor(cmd, 0, 1, &full_scissor);
+                scissor_now = full_scissor;
+            }
             draw_modifier_volumes(cmd, frame, geometry, buffer);
             volumes_drawn = true;
             bound = VK_NULL_HANDLE;
@@ -539,6 +564,24 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         }
         if (tsp_use_alpha(p.tsp))
             push.mode |= 64;
+        {
+            const std::uint32_t mode = clip_off ? 0u : (p.tile_clip & 3u);
+            const VkRect2D want = mode == 2 ? clip_rect(p) : full_scissor;
+            if (want.offset.x != scissor_now.offset.x || want.offset.y != scissor_now.offset.y ||
+                want.extent.width != scissor_now.extent.width ||
+                want.extent.height != scissor_now.extent.height) {
+                vkCmdSetScissor(cmd, 0, 1, &want);
+                scissor_now = want;
+            }
+            if (mode == 3) {
+                const VkRect2D r = clip_rect(p);
+                push.mode |= 512;
+                push.clip[0] = static_cast<float>(r.offset.x);
+                push.clip[1] = static_cast<float>(r.offset.y);
+                push.clip[2] = static_cast<float>(r.offset.x) + static_cast<float>(r.extent.width);
+                push.clip[3] = static_cast<float>(r.offset.y) + static_cast<float>(r.extent.height);
+            }
+        }
         // Fog control in bits 7-8 (2 = none).
         push.mode |= static_cast<std::int32_t>((fog_off ? 2u : (tsp_fog_control(p.tsp) & 3u)) << 7);
         if (item.blended)
@@ -550,6 +593,7 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         ++drawn_polygons;
         drawn_vertices += p.count;
     }
+    vkCmdSetScissor(cmd, 0, 1, &full_scissor);
     if (!volumes_drawn)
         draw_modifier_volumes(cmd, frame, geometry, buffer);
 }

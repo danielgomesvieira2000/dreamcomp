@@ -140,6 +140,11 @@ void DisplayList::reset() {
     sprite_base_ = 0xFFFFFFFFu;
     sprite_offset_ = 0;
     in_sprite_ = false;
+    // Flycast's reset rectangle: tiles 0..39 by 0..14.
+    clip_x0_ = 0;
+    clip_y0_ = 0;
+    clip_x1_ = 40 * 32;
+    clip_y1_ = 15 * 32;
 }
 
 void DisplayList::note_z(float z) noexcept {
@@ -190,8 +195,14 @@ void DisplayList::feed(const std::uint32_t w[8]) {
             close_list();
             return;
         case kUserTileClip:
+            // Tiles of 32 pixels, inclusive (Flycast ta_vtx.cpp setClipRect).
+            clip_x0_ = static_cast<std::uint16_t>((w[4] & 63u) * 32u);
+            clip_y0_ = static_cast<std::uint16_t>((w[5] & 31u) * 32u);
+            clip_x1_ = static_cast<std::uint16_t>(((w[6] & 63u) + 1u) * 32u);
+            clip_y1_ = static_cast<std::uint16_t>(((w[7] & 31u) + 1u) * 32u);
+            return;
         case kObjectListSet:
-            return;  // clipping and object-list placement do not affect what is drawn here
+            return;  // object-list placement does not affect what is drawn here
         case kPolygonOrModVol:
         case kSprite:
             handle_header(w);
@@ -251,6 +262,10 @@ void DisplayList::handle_header(const std::uint32_t w[8]) {
     current_.tsp = w[2];
     current_.tcw = w[3];
     current_.tile_clip = pcw_user_clip(pcw);
+    current_.clip_x0 = clip_x0_;
+    current_.clip_y0 = clip_y0_;
+    current_.clip_x1 = clip_x1_;
+    current_.clip_y1 = clip_y1_;
     current_.first = static_cast<u32>(frame_.vertices.size());
 
     if (pcw_para_type(pcw) == kSprite) {

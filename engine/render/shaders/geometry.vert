@@ -13,6 +13,7 @@ layout(push_constant) uniform Push {
     float alpha_ref;  // used by the fragment shader
     vec4 fog_vert;    // used by the fragment shader
     vec4 fog_ram;
+    vec4 clip;
 } push;
 
 layout(location = 0) in vec3 in_pos;   // x, y in pixels; z is 1/w
