@@ -455,7 +455,8 @@ struct Live {
             static const bool keep = std::getenv("DREAM_NO_VRAM_INVALIDATE") != nullptr;
             memory_.take_vram_dirty([&](std::uint32_t begin, std::uint32_t end) {
                 if (!keep)
-                    vram_invalidated += renderer.textures().invalidate_range(begin, end);
+                    vram_invalidated +=
+                        renderer.textures().invalidate_range(begin, end, /*rendered=*/false);
             });
         }
         if (renderer.textures().set_palette(pvr_.reg_block() + 0x1000 / 4, palette_format()))

@@ -60,6 +60,7 @@ Start Game. Keys in use:
 | `volume` | 0-100 (100) | `--volume N` |
 | `fps` | `auto` (default), `120`, `60` | `--interpolate-auto` / `--interpolate` |
 | `hud_fix`, `hud_layout` | `true` / `edges` (default), `center` | read by the core's HUD correction ([HUD.md](HUD.md)) |
+| `sharp_2d` | `true` (default) / `false` | 1:1 2D quads point sampled when upscaled ([HUD.md](HUD.md) "Sharp 2D") |
 | `texture_pack` | directory, `off`, unset = `<settings dir>/textures` if present | `--texture-pack` ([TEXTURE-PACKS.md](TEXTURE-PACKS.md)) |
 | `dump_textures` | `true`/`false` | `--dump-textures <settings dir>/texture_dump` |
 | `mods` | `name1,name2` (first wins) | `--mod <settings dir>/mods/<name>` each ([MODS.md](MODS.md)) |

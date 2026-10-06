@@ -142,12 +142,12 @@ bool TextureCache::set_palette(const std::uint32_t* palette_ram, PaletteFormat f
     return true;
 }
 
-std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t end) {
+std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t end, bool rendered) {
     if (!ctx_ || !ctx_->device() || end <= begin)
         return 0;
     // Remembered so a render target is never dumped or replaced: its content is a frame, and
     // every frame would be a new texture.
-    if (replacer_.active() &&
+    if (rendered && replacer_.active() &&
         std::find(written_ranges_.begin(), written_ranges_.end(), std::make_pair(begin, end)) ==
             written_ranges_.end() &&
         written_ranges_.size() < 64)

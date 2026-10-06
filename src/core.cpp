@@ -31,6 +31,7 @@
 #include "dream/runtime/system.h"
 #include "dreamcomp/port.h"
 #include "dreamcomp/hud.h"
+#include "dreamcomp/sharp2d.h"
 #include "dreamcomp/settings.h"
 
 #include "dreamcomp/frontend.h"
@@ -476,6 +477,10 @@ public:
         // DREAMCOMP_NO_HUD_FIX=1 shows the stretched HUD, for comparison.
         hud_fix_ = std::getenv("DREAMCOMP_NO_HUD_FIX") == nullptr;
         hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
+        // `sharp_2d` (default true): 1:1 2D quads point sampled, as the console showed them at 1x
+        // (include/dreamcomp/sharp2d.h). DREAMCOMP_NO_SHARP_2D=1 forces it off, for comparison.
+        sharp_2d_ = g_settings.get_bool("sharp_2d", true) &&
+                    std::getenv("DREAMCOMP_NO_SHARP_2D") == nullptr;
         apply_presentation();
         if (g_port && g_port->on_start)
             g_port->on_start(sys, g_settings);
@@ -528,6 +533,9 @@ public:
     // player's overrides. While the F1 editor watches, every frame also leaves a snapshot of the
     // HUD for it -- with a 4:3 picture too, where nothing is moved.
     void on_frame(dream::render::Frame& frame) override {
+        // Before the HUD correction, which moves pieces off whole console pixels.
+        if (sharp_2d_)
+            sharpened_ += sharpen_2d(frame);
         if (!g_port || !g_port->hud.enabled)
             return;
         const bool watching = hud_watch_.load(std::memory_order_relaxed);
@@ -696,6 +704,10 @@ public:
         // DREAMCOMP_NO_HUD_FIX=1 shows the stretched HUD, for comparison.
         hud_fix_ = std::getenv("DREAMCOMP_NO_HUD_FIX") == nullptr;
         hud_edges_ = g_settings.get("hud_layout", "edges") != "center";
+        // `sharp_2d` (default true): 1:1 2D quads point sampled, as the console showed them at 1x
+        // (include/dreamcomp/sharp2d.h). DREAMCOMP_NO_SHARP_2D=1 forces it off, for comparison.
+        sharp_2d_ = g_settings.get_bool("sharp_2d", true) &&
+                    std::getenv("DREAMCOMP_NO_SHARP_2D") == nullptr;
         apply_presentation();
         auto& hc = dream::host::host_controls();
         if (hc.set_rumble)
@@ -723,6 +735,9 @@ public:
         if (hud_corrected_)
             std::printf("dreamcomp: widescreen HUD: %llu primitives corrected\n",
                         static_cast<unsigned long long>(hud_corrected_));
+        if (sharpened_)
+            std::printf("dreamcomp: sharp 2D: %llu one-texel-per-pixel quads point sampled\n",
+                        static_cast<unsigned long long>(sharpened_));
         (void)sys, (void)why;
         if (save_on_exit_ || (g_settings.dirty() && !launch_dirty_))
             g_settings.save();
@@ -752,6 +767,8 @@ private:
     float settle_aspect_ = 0.0f;
     unsigned settle_ = 0;
     std::uint64_t hud_corrected_ = 0;
+    std::uint64_t sharpened_ = 0;
+    bool sharp_2d_ = true;
     // HUD overrides: the port's (read only), the player's (edited with F1), and both in order.
     hud::Overrides hud_port_overrides_, hud_user_overrides_, hud_overrides_;
     std::filesystem::path hud_port_file_, hud_user_file_;

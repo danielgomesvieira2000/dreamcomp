@@ -7,6 +7,7 @@
 
 #include "dream/render/display_list.h"
 #include "dreamcomp/hud.h"
+#include "dreamcomp/sharp2d.h"
 
 using namespace dreamcomp;
 
@@ -165,6 +166,45 @@ int main(int argc, char** argv) {
         }
         hud::Overrides bad;
         CHECK(!bad.load(dir / "bad.ini", &err));
+    }
+
+    // Sharp 2D: a 12x24 glyph quad mapping 12x24 texels of a 512x512 texture, bilinear.
+    {
+        auto quad = [](dream::render::Frame& f, float x0, float y0, float x1, float y1, float u0,
+                       float v0, float u1, float v1, float z1) {
+            dream::render::Polygon p;
+            p.first = static_cast<std::uint32_t>(f.vertices.size());
+            p.count = 4;
+            p.pcw = 0x8u;                          // textured
+            p.tsp = (1u << 13) | (6u << 3) | 6u;   // bilinear, 512x512
+            p.tcw = 0x500E79A4u;
+            const float xs[4] = {x0, x0, x1, x1}, ys[4] = {y0, y1, y0, y1};
+            const float us[4] = {u0, u0, u1, u1}, vs[4] = {v0, v1, v0, v1};
+            for (int i = 0; i < 4; ++i) {
+                dream::render::Vertex v;
+                v.x = xs[i];
+                v.y = ys[i];
+                v.z = i == 3 ? z1 : 5.0f;
+                v.u = us[i];
+                v.v = vs[i];
+                f.vertices.push_back(v);
+            }
+            f.lists[2].push_back(p);
+        };
+        dream::render::Frame f;
+        quad(f, 170, 394, 182, 418, 324 / 512.f, 48 / 512.f, 336 / 512.f, 72 / 512.f, 5.0f);  // 1:1
+        quad(f, 170, 394, 194, 418, 324 / 512.f, 48 / 512.f, 336 / 512.f, 72 / 512.f, 5.0f);  // 2:1
+        quad(f, 170.5f, 394, 182.5f, 418, 324 / 512.f, 48 / 512.f, 336 / 512.f, 72 / 512.f, 5.0f);
+        quad(f, 170, 394, 182, 418, 324.5f / 512, 48 / 512.f, 336.5f / 512, 72 / 512.f, 5.0f);
+        quad(f, 170, 394, 182, 418, 324 / 512.f, 48 / 512.f, 336 / 512.f, 72 / 512.f, 4.0f);  // not flat
+        quad(f, 170, 394, 182, 418, 336 / 512.f, 48 / 512.f, 324 / 512.f, 72 / 512.f, 5.0f);  // u flipped
+        CHECK(sharpen_2d(f) == 2);
+        CHECK(((f.lists[2][0].tsp >> 13) & 3u) == 0);
+        CHECK(((f.lists[2][1].tsp >> 13) & 3u) == 1);
+        CHECK(((f.lists[2][2].tsp >> 13) & 3u) == 1);
+        CHECK(((f.lists[2][3].tsp >> 13) & 3u) == 1);
+        CHECK(((f.lists[2][4].tsp >> 13) & 3u) == 1);
+        CHECK(((f.lists[2][5].tsp >> 13) & 3u) == 0);
     }
 
     if (g_fail)

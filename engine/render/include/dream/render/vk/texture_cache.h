@@ -46,7 +46,10 @@ public:
     // replace whatever the cache decoded from those bytes before. It is also the test that tells a
     // render to texture apart from ordinary double buffering, because a double-buffered title
     // never samples the buffer it just wrote. Returns the number dropped.
-    std::size_t invalidate_range(std::uint32_t begin, std::uint32_t end);
+    // `rendered` (dreamcomp): the bytes are a frame the renderer wrote back, so textures there are
+    // never hashed for a pack or dump. False for the guest's own writes (dirty VRAM pages): those
+    // are ordinary texture uploads and must stay replaceable.
+    std::size_t invalidate_range(std::uint32_t begin, std::uint32_t end, bool rendered = true);
 
     // The descriptor set for a polygon's texture, or VK_NULL_HANDLE when it cannot be decoded.
     // `cmd` is a command buffer outside a render pass, used for the upload.

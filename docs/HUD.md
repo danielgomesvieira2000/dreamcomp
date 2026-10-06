@@ -86,6 +86,26 @@ toward the centre (still reaching both edges).
 | Soulcalibur | sprites + `polygons`, `overlay_z 1.0`, backdrop cover | none |
 | Jet Grind Radio | `polygons`, `overlay_z 1.05` (HUD at 1/w 1.11-6.67, 3D below 0.05) | boot notice fade (full-screen render-to-texture quad) |
 
+## Sharp 2D (upscaled fonts and HUD art)
+
+Fonts and HUD art are packed tight in their textures and drawn as screen-aligned quads that map
+one texel to one console pixel, usually bilinear filtered. At 640x480 every pixel centre lands on a
+texel centre, so the console's filter returns the texel itself. Rendered at 2x or more, the edge
+pixels sample a quarter texel outside the quad and pull in the neighbouring glyph: thin frames
+around every character (Jet Grind Radio's dialogue; gone at `scale=1`, which proves the cause).
+
+`sharpen_2d` (`include/dreamcomp/sharp2d.h`, `src/sharp2d.cpp`), run on every frame before the HUD
+correction, switches bilinear to point sampling on textured 4-vertex quads that are axis-aligned,
+flat (one 1/w), on whole console pixels, and map exactly one texel per pixel starting on a texel
+edge (flips allowed; stride, mipmapped and two-volume textures skipped). That reproduces the 1x
+picture at any scale. Setting `sharp_2d` (default true); `DREAMCOMP_NO_SHARP_2D=1` forces it off.
+Report line `dreamcomp: sharp 2D: N ... quads point sampled`. Unit checks in `dreamcomp_hud_tests`.
+
+Verified 2026-10-06: Jet Grind Radio play scenario -- dialogue frames gone, HUD art with the
+console's pixel edges, only 2D regions change (0.3-2 % of pixels), audio identical; Soulcalibur
+fight and menus -- only the name plates change (sharper). Taste note: bilinear-upscaled HUD art
+looks softer; the setting keeps that available.
+
 ## Limits and next step
 
 - Edge grouping is a heuristic: in Soulcalibur the round clock is grouped apart from "STAGE 1"
