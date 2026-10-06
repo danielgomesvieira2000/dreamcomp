@@ -434,9 +434,12 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     std::vector<Item> items;
     const auto add_list = [&](ListType list, bool blended, bool alpha_test) {
         for (const Polygon& p : frame.lists[static_cast<unsigned>(list)]) {
-            float nearest = 0.0f;
+            // Sort key (dreamcomp): the farthest point, as Flycast's sorter uses (minZ): a large
+            // strip reaching toward the camera must not be drawn over what lies in front of
+            // most of it.
+            float nearest = 1e30f;
             for (std::uint32_t i = 0; i < p.count; ++i)
-                nearest = std::max(nearest, frame.vertices[p.first + i].z);
+                nearest = std::min(nearest, frame.vertices[p.first + i].z);
             items.push_back({&p, nearest, blended, alpha_test});
         }
     };
@@ -462,9 +465,14 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         const Polygon& p = *item.poly;
         PipelineKey key{};
         key.depth_mode = isp_depth_mode(p.isp) & 7u;
+        // As Flycast (pipeline.cpp): punch-through always GREATER_EQUAL with depth writes;
+        // translucent GREATER_EQUAL when the hardware sorts it.
+        if (item.alpha_test || (item.blended && geometry.autosort))
+            key.depth_mode = 6u;
         // A translucent surface tests depth but does not write it: writing would hide surfaces
         // behind it that still have to be blended in.
-        key.depth_write = (item.blended || isp_z_write_disable(p.isp)) ? 0u : 1u;
+        key.depth_write =
+            item.alpha_test ? 1u : (item.blended || isp_z_write_disable(p.isp)) ? 0u : 1u;
         key.cull_mode = isp_cull_mode(p.isp) & 3u;
         key.blend = item.blended ? 1u : 0u;
         key.src_blend = tsp_src_instr(p.tsp) & 7u;

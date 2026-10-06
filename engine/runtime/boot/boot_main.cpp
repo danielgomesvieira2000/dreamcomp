@@ -296,6 +296,10 @@ struct Live {
         // PT_ALPHA_REF: the punch-through threshold the guest chose, which changes per scene.
         geometry.alpha_ref = static_cast<float>(pvr_.reg(0x11C) & 0xFFu) / 255.0f;
         geometry.shadow_scale = static_cast<float>(pvr_.reg(0x074) & 0xFFu) / 256.0f;
+        // Auto-sort: with FPU_PARAM_CFG bit 21 the region array's per-tile PreSort bit decides
+        // (not read yet: games that use type-2 headers sort, as Soulcalibur's tiles all do);
+        // otherwise ISP_FEED_CFG bit 0 clear means the hardware sorts.
+        geometry.autosort = (pvr_.reg(0x07C) & (1u << 21)) != 0 || (pvr_.reg(0x098) & 1u) == 0;
         // Palette memory is re-read every render but only invalidates the cache when it has
         // actually changed, which is rare; dropping it every frame would decode every texture
         // every frame.

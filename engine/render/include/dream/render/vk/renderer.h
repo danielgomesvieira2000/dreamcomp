@@ -29,6 +29,11 @@ struct FrameGeometry {
     // How much of a shadowed surface's light is left inside a modifier volume: FPU_SHAD_SCALE
     // (PVR + 0x074) bits 0-7 over 256 (dreamcomp).
     float shadow_scale = 0.5f;
+    // Translucent auto-sort (the hardware sorts translucent polygons itself): from the region
+    // array's PreSort bit or ISP_FEED_CFG bit 0 (dreamcomp). The translucent list then tests
+    // depth with GREATER_EQUAL whatever its ISP word says, as Flycast does, so a layer drawn
+    // exactly on an opaque surface is not rejected.
+    bool autosort = true;
 };
 
 class Renderer {
