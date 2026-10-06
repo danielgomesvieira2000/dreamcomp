@@ -132,7 +132,11 @@ def run_scenario(a):
         summary["audio_clicks"] = sum(clicks)
         summary["audio_clipped"] = sum(clips)
     # Screenshots.
+    # DREAM_SHOT_INTERP=1 also writes screenshot-NNN-interp.ppm (the blended frame shown just
+    # before frame NNN): saved as shot_<frame>_interp.png, kept out of the sheet and the compare.
     ppms = sorted(f for f in os.listdir(out) if f.startswith("screenshot-") and f.endswith(".ppm"))
+    interp = {f.replace("-interp", "") for f in ppms if f.endswith("-interp.ppm")}
+    ppms = [f for f in ppms if not f.endswith("-interp.ppm")]
     want = [int(x) for x in shots.split(",")] if shots else []
     pngs = []
     try:
@@ -142,6 +146,10 @@ def run_scenario(a):
             Image.open(os.path.join(out, f)).save(dst)
             os.remove(os.path.join(out, f))
             pngs.append((n, dst))
+            if f in interp:
+                fi = f.replace(".ppm", "-interp.ppm")
+                Image.open(os.path.join(out, fi)).save(os.path.join(out, f"shot_{n:05d}_interp.png"))
+                os.remove(os.path.join(out, fi))
         if pngs:
             w, h = 427, 240
             cols = min(3, len(pngs))
@@ -176,7 +184,8 @@ def compare(dirs):
         except ImportError:
             return 0
         a_dir, b_dir = dirs
-        shots = sorted(f for f in os.listdir(a_dir) if f.startswith("shot_") and f.endswith(".png"))
+        shots = sorted(f for f in os.listdir(a_dir)
+                       if f.startswith("shot_") and f.endswith(".png") and "_interp" not in f)
         for f in shots:
             pb = os.path.join(b_dir, f)
             if not os.path.exists(pb):

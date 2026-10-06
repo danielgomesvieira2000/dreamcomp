@@ -34,6 +34,9 @@ keeps running at its own 60 Hz (series rule: never change the logic rate).
 
 - `dreamcomp_ta_match A.ta B.ta [--window N]` — pairing coverage and displacement.
 - `--dump-ta FILE --dump-ta-at-frame N --dump-ta-count K` — K consecutive display lists.
+- `tools/slowmo.py` — half-speed side-by-side clip, 60 fps vs 120 fps with blended frames, for
+  judging the motion on a 60 Hz screen (2026-10-06: pre-round camera sweep and fight action,
+  180 frames each, every frame blended, no torn strips seen).
 
 ## Using it
 
