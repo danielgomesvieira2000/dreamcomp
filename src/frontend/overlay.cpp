@@ -168,6 +168,10 @@ struct Overlay::Impl {
         cv.notify_all();
         if (worker.joinable())
             worker.join();
+        // Every document owner goes before Rml::Shutdown, which frees the elements: the HUD
+        // editor detaches its listeners from its document when destroyed (a crash on Quit Game
+        // when it outlived the shutdown, 2026-10-06).
+        hud.reset();
         ui.reset();
         if (ready)
             Rml::Shutdown();

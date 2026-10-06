@@ -2400,8 +2400,8 @@ int main(int argc, char** argv) {
         if (live->overlays.empty())
             std::printf("F1 (or a pad's select button) opens the controller bindings\n");
         else
-            std::printf("F1 opens the controller bindings; Escape or a pad's select button the "
-                        "menu\n");
+            std::printf("Escape or a pad's select button opens the menu (an overlay may take F1: "
+                        "dreamcomp's HUD editor)\n");
         auto previous_render = std::move(pvr.on_render);
         pvr.on_render = [&live, previous_render](const std::vector<std::uint32_t>& stream) {
             if (previous_render)

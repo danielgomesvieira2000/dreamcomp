@@ -27,6 +27,13 @@ opens the engine's binding screen. Escape no longer quits; Quit Game (confirmed)
 through the normal stop path (report, settings, memory card). `DREAMCOMP_NO_OVERLAY=1` turns the
 in-game panel off.
 
+Quit Game is scriptable for regression runs: `scenario.py fight --speed real --env
+"DREAMCOMP_OVERLAY_KEYS=@3700,esc,wait,wait,click:p-quit,wait,wait,click:modal-quit"` must end
+with `stop: the window was closed` and no `crash:` line. 2026-10-06: a crash in RmlUi on exit (the
+HUD editor outlived `Rml::Shutdown`) reproduced this way with `--set latency=low` and fixed; the
+hang Daniel saw once (game thread still spinning in the frame wait after Quit Game) did not
+reproduce with the default, `latency=low`, `fps=120` or `frame_timing=exact`.
+
 ### Tabs
 
 | Tab | Rows | Applies in game |

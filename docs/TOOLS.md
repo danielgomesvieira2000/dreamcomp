@@ -20,7 +20,7 @@
 | `dreamcomp_hud_tests <scratch dir>` (target, `EXCLUDE_FROM_ALL`) | HUD correction and overrides on synthetic frames | build with `cmake --build <port build> --target dreamcomp_hud_tests` |
 | `tools/audio_check.py run.wav [--per-second]` | Clipping and clicks (isolated second-difference spikes) per channel, with timestamps | locate a click, then `DREAM_AICA_PROBE` it |
 | `tools/crash_lookup.py <port> 0xOFFSET...` | Names the function of a crash report's `module + 0xOFFSET` from the linker map (`/MAP`, beside the executable) | crash reports go to stderr; minidumps to `%APPDATA%/dream-recomp/dream-recomp/crash-*.dmp` |
-| `.venv/Scripts/python tools/crash_stack.py [DUMP]` | The crashing thread's stack from a minidump, scanned for return addresses in the game and named from the map (needs `pip install minidump`) | heuristic: the top entries are the reliable ones |
+| `.venv/Scripts/python tools/crash_stack.py [DUMP] [--all] [--map FILE] [--show N]` | The crashing thread's stack from a minidump, scanned for return addresses in the game and named from the map (needs `pip install minidump`); a hang dump (no exception) or `--all` lists every thread's rip and stack; `--map` for a dump from an older build | heuristic: the top entries are the reliable ones; the crash handler's own frames come first, raise `--show`/`--words` and grep for the exe |
 | `tools/audit.py all [--repo DIR]` | No game data, engine ledger complete, docs/skills consistent | pre-commit hook: `install-hook` |
 | `tools/build_linux.sh <port> [--headless]` | Linux build (native or WSL) into `<port>/build-linux` | window build needs `libsdl3-dev`, `glslc` |
 
