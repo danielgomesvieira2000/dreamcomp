@@ -1,6 +1,7 @@
 // ta_dump: print every polygon of a captured TA display list (an F11 / --capture-at .ta file).
-//   ta_dump capture-000.ta [--list N] [--region x0,y0,x1,y1]
-// One line per strip: list, index, vertex count, sprite?, PCW/ISP/TSP/TCW, screen bounds, z range.
+//   ta_dump capture-000.ta [--list N] [--region x0,y0,x1,y1] [--verts]
+// One line per strip: list, index, vertex count, sprite?, PCW/ISP/TSP/TCW, screen bounds, z range;
+// --verts adds one line per vertex (x, y, z = 1/w, u, v, base and offset colour).
 // Used to find what distinguishes 2D HUD draws from 3D geometry (docs/HUD.md).
 #include <algorithm>
 #include <cstdio>
@@ -14,16 +15,19 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: ta_dump FILE.ta [--list N] [--region x0,y0,x1,y1]\n");
+        std::fprintf(stderr, "usage: ta_dump FILE.ta [--list N] [--region x0,y0,x1,y1] [--verts]\n");
         return 2;
     }
     int only_list = -1;
+    bool verts = false;
     float rx0 = -1e9f, ry0 = -1e9f, rx1 = 1e9f, ry1 = 1e9f;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--list") && i + 1 < argc)
             only_list = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--region") && i + 1 < argc)
             std::sscanf(argv[++i], "%f,%f,%f,%f", &rx0, &ry0, &rx1, &ry1);
+        else if (!std::strcmp(argv[i], "--verts"))
+            verts = true;
     }
     std::ifstream in(argv[1], std::ios::binary);
     std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -54,6 +58,11 @@ int main(int argc, char** argv) {
             std::printf("L%zu #%-4zu n=%-3u pcw=%08x isp=%08x tsp=%08x tcw=%08x  x[%7.1f,%7.1f] "
                         "y[%6.1f,%6.1f] z[%.6g,%.6g]\n",
                         l, i, p.count, p.pcw, p.isp, p.tsp, p.tcw, x0, x1, y0, y1, z0, z1);
+            for (std::uint32_t k = 0; verts && k < p.count; ++k) {
+                const auto& v = f.vertices[p.first + k];
+                std::printf("      v%-2u x %9.2f y %9.2f z %-11.6g u %-9.5g v %-9.5g base %08x off %08x\n",
+                            k, v.x, v.y, v.z, v.u, v.v, v.base, v.offset);
+            }
         }
     }
     return 0;
