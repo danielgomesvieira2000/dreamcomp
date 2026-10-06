@@ -1,6 +1,7 @@
 // See texture_cache.h.
 #include "dream/render/vk/texture_cache.h"
 
+#include <cstdlib>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -325,8 +326,23 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         }
     }
     std::vector<std::uint32_t> pixels;
+    const auto t_decode = std::chrono::steady_clock::now();
     if (!replacement || replacer_.dumping()) {
-        if (!decode_texture(e.info, vram_, vram_size_, palette_, pixels)) {
+        const bool decoded_ok = decode_texture(e.info, vram_, vram_size_, palette_, pixels);
+        const auto ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
+                                                                 t_decode)
+                .count());
+        decode_ns += ns;
+        // DREAM_TEX_SLOW=MS (dreamcomp): name every texture whose decode took longer.
+        static const double slow_ms = [] {
+            const char* v = std::getenv("DREAM_TEX_SLOW");
+            return v && *v ? std::atof(v) : -1.0;
+        }();
+        if (slow_ms >= 0 && static_cast<double>(ns) * 1e-6 > slow_ms)
+            std::fprintf(stderr, "texture decode %.2f ms: %s\n", static_cast<double>(ns) * 1e-6,
+                         e.info.describe().c_str());
+        if (!decoded_ok) {
             ++failed;
             entries_.emplace(key, std::move(e));
             return VK_NULL_HANDLE;
@@ -334,10 +350,14 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         if (hashed)
             replacer_.dump(e.info, hash, pixels);
     }
+    const auto t_upload = std::chrono::steady_clock::now();
     const bool uploaded =
         replacement
             ? upload(cmd, e, replacement->pixels, replacement->width, replacement->height)
             : upload(cmd, e, pixels, e.info.width, e.info.height);
+    upload_ns += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                std::chrono::steady_clock::now() - t_upload)
+                                                .count());
     if (replacement && uploaded)
         ++replacer_.replaced;
     if (!uploaded) {

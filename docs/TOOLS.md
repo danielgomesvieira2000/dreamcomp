@@ -27,8 +27,12 @@ Engine-level instruments (flags of the port executable, `--help`): `--suggest-co
 | `DREAM_AICA_PROBE=FIRST,COUNT[,FILE]` | For output samples FIRST.. (the `--wav` frame index) write every playing channel's state and contribution, the DSP's share, every channel-register write and every register byte that changed (FILE, default `aica_probe.txt`) |
 | `DREAM_PVR_WATCH=11C,108` | Log writes to these PVR register offsets (hex from 0x005F8000) to stderr |
 | `DREAM_AUDIO_TRACE=1` | Log every audio block the sink drops, with the queue level |
+| `DREAM_TEX_SLOW=MS` | Name every texture whose decode took longer than MS |
+| `DREAM_NO_PIPELINE_CACHE=1` | Start without the persistent pipeline cache (to measure) |
 | `DREAM_PROFILE=1` | Host time per scheduler event and rendering after the report |
 | `DREAM_SINGLE_THREAD=1` | Guest and window events on one thread (upstream behaviour) |
+
+Report lines for performance: `pacing:` (real-time runs: frame-interval percentiles, frames over 20/33 ms, and per late frame the guest frame, textures decoded, pipelines made, render and decode ms) and `textures:` (total decode and upload time).
 
 ## Press scripts
 

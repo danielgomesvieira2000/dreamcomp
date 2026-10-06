@@ -127,8 +127,86 @@ void print_guest_backtrace() {
 // written region can be worked out precisely enough to be safe, --framebuffer-writeback turns it
 // on and the default leaves video memory alone. Flycast reaches the same conclusion from the other
 // direction: its framebuffer emulation is off unless a title needs it.
+// Frame pacing as the player sees it (dreamcomp): the wall-clock interval between successive
+// vblanks of a real-time run, and how far the pacing sleep overshot. Printed as the `pacing:`
+// report line; a stutter shows up as late frames long before it shows in the average speed.
+struct Pacing {
+    std::vector<float> intervals_ms;
+    double overshoot_ms_sum = 0, overshoot_ms_max = 0;
+    std::uint64_t sleeps = 0;
+    std::chrono::steady_clock::time_point last{};
+    // A late frame with what happened during it: textures decoded, pipelines created and host
+    // time spent drawing, so a hitch can be attributed without a profiler.
+    struct Late {
+        std::uint64_t frame;
+        float ms;
+        std::uint64_t textures, pipelines;
+        float render_ms, decode_ms;
+    };
+    std::vector<Late> late_frames;
+    std::uint64_t last_textures = 0, last_pipelines = 0, last_render_ns = 0, last_decode_ns = 0;
+    void vblank(std::uint64_t frame, std::uint64_t textures, std::uint64_t pipelines,
+                std::uint64_t render_ns, std::uint64_t decode_ns) {
+        const auto now = std::chrono::steady_clock::now();
+        if (last.time_since_epoch().count() != 0 && intervals_ms.size() < 2'000'000) {
+            const float ms = std::chrono::duration<float, std::milli>(now - last).count();
+            intervals_ms.push_back(ms);
+            if (ms > 20.0f && late_frames.size() < 64)
+                late_frames.push_back({frame, ms, textures - last_textures,
+                                       pipelines - last_pipelines,
+                                       static_cast<float>(render_ns - last_render_ns) * 1e-6f,
+                                       static_cast<float>(decode_ns - last_decode_ns) * 1e-6f});
+        }
+        last = now;
+        last_textures = textures;
+        last_pipelines = pipelines;
+        last_render_ns = render_ns;
+        last_decode_ns = decode_ns;
+    }
+    void slept(std::chrono::steady_clock::time_point target) {
+        const double over =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - target)
+                .count();
+        ++sleeps;
+        overshoot_ms_sum += over;
+        overshoot_ms_max = std::max(overshoot_ms_max, over);
+    }
+    void report() const {
+        if (intervals_ms.size() < 10)
+            return;
+        std::vector<float> v = intervals_ms;
+        std::sort(v.begin(), v.end());
+        auto pct = [&](double q) { return v[static_cast<std::size_t>(q * (v.size() - 1))]; };
+        std::size_t late = 0, very_late = 0;
+        double sum = 0;
+        for (float x : intervals_ms) {
+            sum += x;
+            late += x > 20.0f;
+            very_late += x > 33.4f;
+        }
+        std::printf("pacing: %zu frames, mean %.2f ms, p50 %.2f p95 %.2f p99 %.2f max %.1f ms, "
+                    "%zu over 20 ms, %zu over 33 ms; sleep overshoot mean %.2f max %.2f ms "
+                    "(%llu sleeps)\n",
+                    v.size(), sum / static_cast<double>(v.size()), pct(0.5), pct(0.95), pct(0.99),
+                    v.back(), late, very_late, sleeps ? overshoot_ms_sum / static_cast<double>(sleeps) : 0.0,
+                    overshoot_ms_max, static_cast<unsigned long long>(sleeps));
+        if (!late_frames.empty()) {
+            std::printf("pacing: late frames (guest frame: ms, textures decoded, pipelines made, "
+                        "render ms, of which texture decode ms):");
+            for (const auto& l : late_frames)
+                std::printf(" %llu:%.0f/%llut/%llup/%.0fr/%.0fd",
+                            static_cast<unsigned long long>(l.frame), static_cast<double>(l.ms),
+                            static_cast<unsigned long long>(l.textures),
+                            static_cast<unsigned long long>(l.pipelines),
+                            static_cast<double>(l.render_ms), static_cast<double>(l.decode_ms));
+            std::printf("\n");
+        }
+    }
+};
+
 struct Live {
     Live(dream::mem::DcMemory& memory, const dream::pvr::Core& pvr) : memory_(memory), pvr_(pvr) {}
+    Pacing pacing;
 
     // `scale` multiplies the resolution the geometry is drawn at. The frame is resampled back to
     // the guest's own framebuffer on the way into video memory, so a higher setting sharpens the
@@ -178,6 +256,21 @@ struct Live {
         if (!overlay_presenter.create(window.context(), window.render_pass())) {
             error = overlay_presenter.error();
             return false;
+        }
+        // dreamcomp: pipelines from earlier runs, created now rather than mid-game.
+        // DREAM_NO_PIPELINE_CACHE=1 starts cold, for measuring.
+        if (!std::getenv("DREAM_NO_PIPELINE_CACHE")) {
+            const std::string bindings = dream::render::vk::default_bindings_path();
+            const auto slash = bindings.find_last_of("/\\");
+            if (slash != std::string::npos) {
+                const auto t0 = std::chrono::steady_clock::now();
+                renderer.use_pipeline_cache(bindings.substr(0, slash + 1) + "pipeline_cache.bin");
+                if (renderer.prewarmed)
+                    std::printf("pipelines: %u prepared in %.1f ms\n", renderer.prewarmed,
+                                std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - t0)
+                                    .count());
+            }
         }
         renderer.set_memory(memory_.vram(), dream::mem::DcMemory::kVramSize,
                             pvr_.reg_block() + 0x1000 / 4, palette_format());
@@ -2099,8 +2192,13 @@ int main(int argc, char** argv) {
                 started + paused_for +
                 std::chrono::duration_cast<std::chrono::steady_clock::duration>(guest);
             const auto now = std::chrono::steady_clock::now();
-            if (target > now && target - now < std::chrono::seconds(1))
+            if (target > now && target - now < std::chrono::seconds(1)) {
                 std::this_thread::sleep_for(target - now);
+                live->pacing.slept(target);
+            }
+            live->pacing.vblank(sys.spg.frames(), live->renderer.textures().decoded,
+                                live->renderer.pipelines, g_render_ns,
+                                live->renderer.textures().decode_ns);
         };
     }
 #endif
@@ -2546,6 +2644,11 @@ int main(int argc, char** argv) {
                                       : 0.0,
                 static_cast<unsigned long long>(live->interp_jumped),
                 live->interp_rendered ? live->interp_ms / static_cast<double>(live->rendered) : 0.0);
+        live->pacing.report();
+        std::printf("textures: %u decoded in %.1f ms, uploads recorded in %.1f ms\n",
+                    live->renderer.textures().decoded,
+                    static_cast<double>(live->renderer.textures().decode_ns) * 1e-6,
+                    static_cast<double>(live->renderer.textures().upload_ns) * 1e-6);
         if (live->have_frame)
             std::printf("window: last shown %s\n", live->shown.describe().c_str());
         // Vulkan objects are destroyed now rather than at scope exit, while everything they were

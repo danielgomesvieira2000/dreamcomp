@@ -348,3 +348,13 @@ TEST_CASE("texture: the size a texture occupies bounds the cache's invalidation 
     info.format = PixelFormat::Rgb565;
     CHECK(info.size_bytes() == 256u * 8u + 64u * 64u / 4u);  // codebook plus one index per block
 }
+
+TEST_CASE("the twiddled index is an x part OR a y part, for every shape the decoder sees") {
+    // decode_texture builds the index from per-column and per-row tables; this is why it may.
+    for (std::uint32_t w = 8; w <= 1024; w *= 2)
+        for (std::uint32_t h = 8; h <= 1024; h *= 2)
+            for (std::uint32_t y = 0; y < h; y += (h > 64 ? 7 : 1))
+                for (std::uint32_t x = 0; x < w; x += (w > 64 ? 5 : 1))
+                    REQUIRE(twiddle_index(x, y, w, h) ==
+                            (twiddle_index(x, 0, w, h) | twiddle_index(0, y, w, h)));
+}

@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 #include "dream/render/tsp.h"
@@ -296,7 +299,7 @@ VkPipeline Renderer::pipeline_for(const PipelineKey& key) {
     gpci.renderPass = render_pass_;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(ctx_->device(), VK_NULL_HANDLE, 1, &gpci, nullptr, &pipeline) !=
+    if (vkCreateGraphicsPipelines(ctx_->device(), pipeline_cache_, 1, &gpci, nullptr, &pipeline) !=
         VK_SUCCESS) {
         error_ = "vkCreateGraphicsPipelines failed";
         return VK_NULL_HANDLE;
@@ -479,10 +482,100 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     }
 }
 
+namespace {
+constexpr std::uint32_t kCacheMagic = 0x43505244u;  // "DRPC"
+constexpr std::uint32_t kCacheVersion = 1;
+}  // namespace
+
+void Renderer::use_pipeline_cache(const std::string& path) {
+    if (!ctx_ || !ctx_->device() || path.empty())
+        return;
+    pipeline_cache_path_ = path;
+    std::vector<std::uint32_t> keys;
+    std::vector<char> blob;
+    {
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<char> data((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+        auto word = [&](std::size_t i) {
+            std::uint32_t w = 0;
+            std::memcpy(&w, data.data() + i * 4, 4);
+            return w;
+        };
+        if (data.size() >= 12 && word(0) == kCacheMagic && word(1) == kCacheVersion) {
+            const std::uint32_t n = word(2);
+            if (data.size() >= 16 + 4ull * n) {
+                for (std::uint32_t i = 0; i < n; ++i) keys.push_back(word(3 + i));
+                const std::uint32_t bytes = word(3 + n);
+                if (data.size() >= 16 + 4ull * n + bytes)
+                    blob.assign(data.begin() + 16 + 4 * n, data.begin() + 16 + 4 * n + bytes);
+            }
+        }
+    }
+    VkPipelineCacheCreateInfo pcci{};
+    pcci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    // A cache from another driver or GPU is ignored by the driver itself (its header says whose).
+    pcci.initialDataSize = blob.size();
+    pcci.pInitialData = blob.empty() ? nullptr : blob.data();
+    if (vkCreatePipelineCache(ctx_->device(), &pcci, nullptr, &pipeline_cache_) != VK_SUCCESS) {
+        pcci.initialDataSize = 0;
+        pcci.pInitialData = nullptr;
+        if (vkCreatePipelineCache(ctx_->device(), &pcci, nullptr, &pipeline_cache_) != VK_SUCCESS)
+            pipeline_cache_ = VK_NULL_HANDLE;
+    }
+    for (std::uint32_t bits : keys) {
+        PipelineKey k{};
+        k.depth_mode = bits & 7u;
+        k.depth_write = (bits >> 3) & 1u;
+        k.cull_mode = (bits >> 4) & 3u;
+        k.src_blend = (bits >> 6) & 7u;
+        k.dst_blend = (bits >> 9) & 7u;
+        k.blend = (bits >> 12) & 1u;
+        if (pipeline_for(k))
+            ++prewarmed;
+    }
+}
+
+void Renderer::save_pipeline_cache() {
+    if (pipeline_cache_path_.empty() || !pipeline_cache_)
+        return;
+    std::size_t size = 0;
+    std::vector<char> blob;
+    if (vkGetPipelineCacheData(ctx_->device(), pipeline_cache_, &size, nullptr) == VK_SUCCESS &&
+        size > 0) {
+        blob.resize(size);
+        if (vkGetPipelineCacheData(ctx_->device(), pipeline_cache_, &size, blob.data()) !=
+            VK_SUCCESS)
+            blob.clear();
+        blob.resize(std::min(blob.size(), size));
+    }
+    std::vector<std::uint32_t> words{kCacheMagic, kCacheVersion,
+                                     static_cast<std::uint32_t>(pipelines_.size())};
+    for (const auto& [key, pipeline] : pipelines_) words.push_back(key.bits());
+    words.push_back(static_cast<std::uint32_t>(blob.size()));
+    // Written to a temporary name and renamed, so a crash mid-write never leaves a torn cache.
+    const std::string tmp = pipeline_cache_path_ + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(words.data()),
+                  static_cast<std::streamsize>(words.size() * 4));
+        out.write(blob.data(), static_cast<std::streamsize>(blob.size()));
+        if (!out)
+            return;
+    }
+    std::remove(pipeline_cache_path_.c_str());
+    std::rename(tmp.c_str(), pipeline_cache_path_.c_str());
+}
+
 void Renderer::destroy() {
     if (!ctx_ || !ctx_->device())
         return;
     vkDeviceWaitIdle(ctx_->device());
+    save_pipeline_cache();
+    if (pipeline_cache_) {
+        vkDestroyPipelineCache(ctx_->device(), pipeline_cache_, nullptr);
+        pipeline_cache_ = VK_NULL_HANDLE;
+    }
     for (auto& [key, pipeline] : pipelines_) vkDestroyPipeline(ctx_->device(), pipeline, nullptr);
     pipelines_.clear();
     textures_.destroy();

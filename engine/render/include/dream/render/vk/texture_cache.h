@@ -73,6 +73,9 @@ public:
     void begin_frame();
     std::uint32_t evicted = 0;
     std::uint32_t decoded = 0, failed = 0, hits = 0;
+    // Host time in decode_texture and in upload (image, memory, staging, copy recording), for the
+    // report and the pacing line (dreamcomp).
+    std::uint64_t decode_ns = 0, upload_ns = 0;
     // Textures dropped because the renderer wrote over them: a non-zero count means the title
     // really is rendering to a texture rather than merely double buffering.
     std::uint32_t overwritten = 0;

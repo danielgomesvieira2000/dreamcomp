@@ -84,6 +84,10 @@ def run_scenario(a):
     args = [exe, "--window", "--disc", disc, "--settings", os.path.join(out, "settings.ini"),
             "--vmu", os.path.join(out, "vmu.bin"), "--bindings", os.path.join(out, "bindings.txt"),
             "--rtc-seed", "1000000", "--max-frames", str(frames), "--wav", os.path.join(out, "audio.wav")]
+    # The play path (double-click) turns `scale` into --scale; flags runs do not, so do it here,
+    # with the game's default of 2.
+    scale = next((kv.split("=", 1)[1] for kv in a.set if kv.split("=", 1)[0].strip() == "scale"), "2")
+    args += ["--scale", scale.strip()]
     if a.speed == "max":
         args += ["--unthrottled", "--present-mode", "immediate"]
     if press:

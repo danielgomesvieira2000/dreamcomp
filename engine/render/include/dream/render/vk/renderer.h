@@ -40,6 +40,12 @@ public:
     void set_memory(const std::uint8_t* vram, std::size_t vram_size,
                     const std::uint32_t* palette_ram, PaletteFormat palette_format);
     TextureCache& textures() noexcept { return textures_; }
+    // Persistent pipelines (dreamcomp): loads a Vulkan pipeline cache and the list of pipeline
+    // variants earlier runs used from `path`, and creates those variants now, so none is compiled
+    // mid-game (a 10-30 ms hitch each on some drivers). destroy() writes both back. Call after
+    // create(). A missing, foreign or damaged file only means starting cold.
+    void use_pipeline_cache(const std::string& path);
+    std::uint32_t prewarmed = 0;
     void destroy();
 
     // Records the draw commands for one decoded frame. The caller has already begun the render
@@ -80,6 +86,9 @@ private:
     };
 
     VkPipeline pipeline_for(const PipelineKey& key);
+    void save_pipeline_cache();
+    VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
+    std::string pipeline_cache_path_;
 
     Context* ctx_ = nullptr;
     VkRenderPass render_pass_ = VK_NULL_HANDLE;
