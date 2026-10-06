@@ -103,16 +103,17 @@ containers) in regions: launcher list; panel tab bar, rows, footer; dialog butto
 
 **Threads.** With a window, the main thread only pumps SDL events (`Window::pump_events`) and
 the title runs on its own thread, so moving or resizing the window (a modal loop on Windows) does
-not stop the game; `DREAM_SINGLE_THREAD=1` puts everything back on one thread. All overlay entry
-points run on the guest thread and share one mutex: `on_event` inside `Window::poll` (which drains
-the pumped events), `overlay_image` / `draw` inside `Live::present`, `on_vblank` (test script
-only). Apply calls `HostControls` (window: rumble scale, fullscreen -- forwarded to the main
-thread; audio: volume) and `present_options()`.
+not stop the game; `DREAM_SINGLE_THREAD=1` puts everything back on one thread. The in-game menu has
+a third thread of its own: RmlUi input, layout and rasterising (10-15 ms per redraw at window size)
+run there, so navigating the menu never costs the game a frame. The game thread only queues events
+(`Overlay::on_event`, deciding by event type whether the menu takes them), picks up the newest
+finished image (`render_window`, `draw` for test screenshots) and runs what the menu asks of the
+game -- Apply (`OverlayContext::applied`), Quit, the binding screen, reloading bindings -- at its
+next vblank or present. `Settings` has a lock for the two threads.
 
-**Cost while open** (Iris Xe): the panel is rendered at the window's size only when it changes
-and blended over the game on the GPU (a second `Presenter` layer), so frames keep the direct
-present path. Unthrottled at scale 2: 3.8x real time with the panel open for part of the run vs
-4.2x closed.
+**Cost while open** (Iris Xe): the panel is blended over the game on the GPU and redrawn on the
+overlay thread only when it changes. Fight scenario with 40 key presses in the open panel: frames
+over 20 ms 48 -> 4 after moving RmlUi off the game thread (the rest: first open, stage load).
 
 ## Automated checks
 

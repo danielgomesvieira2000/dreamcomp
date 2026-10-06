@@ -1,18 +1,27 @@
 // The frontend menu over the running game (docs/FRONTEND.md): MenuUi in InGame mode, drawn by
-// the CPU renderer (soft_render.h) into an RGBA buffer that is composited into each presented
-// frame through the engine's overlay hooks (host_ext.h). Escape or a pad's Select/Back opens and
-// closes it; the guest is paused while it is open.
+// the CPU renderer (soft_render.h) into an RGBA image that the engine blends over the game on the
+// GPU (Extension::overlay_image), or composites into the frame for a test screenshot. Escape or a
+// pad's Select/Back opens and closes it; the game keeps running.
 //
-// The menu is laid out in the part of the frame the window actually shows (the fit mode may crop
-// it), at 1 dp = 1/720 of that height, so it looks the same as the pre-game window.
+// Threads: everything RmlUi does -- input, layout, rasterising -- runs on the overlay's own worker
+// thread, so a redraw (10-15 ms at window size) never holds up a game frame. The game thread
+// only queues events, picks up the latest finished image, and runs what the menu asks of the
+// game (Apply, Quit, the binding screen) at its next vblank or present, where the game expects
+// such calls. The two share a small mutex for that hand-over and nothing else.
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "dream/render/png.h"
@@ -55,32 +64,89 @@ std::vector<std::string> split(const char* s, char sep) {
     return out;
 }
 
+// What the game thread wants drawn: the window's size (blended on the GPU), or a frame of w x h
+// shown in a vw x vh window (composited on the CPU, for a test screenshot).
+struct DrawMode {
+    unsigned w = 0, h = 0, vw = 0, vh = 0;
+    bool frame = false;
+    bool operator==(const DrawMode& o) const noexcept {
+        return w == o.w && h == o.h && vw == o.vw && vh == o.vh && frame == o.frame;
+    }
+    bool operator!=(const DrawMode& o) const noexcept { return !(*this == o); }
+};
+
+// The finished menu image, handed from the worker to the game thread.
+struct Image {
+    std::vector<std::uint32_t> px;
+    DrawMode mode;
+    unsigned w = 0, h = 0, x = 0, y = 0;  // where it sits in the frame (frame mode)
+    std::uint64_t seq = 0;
+};
+
+bool consumed_while_open(const SDL_Event& ev) {
+    switch (ev.type) {
+    case SDL_EVENT_KEY_DOWN:
+        // F1 is the engine's binding screen, Alt+Enter the window's fullscreen toggle.
+        if (ev.key.key == SDLK_F1)
+            return false;
+        if (ev.key.key == SDLK_RETURN && (ev.key.mod & SDL_KMOD_ALT))
+            return false;
+        return true;
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        return true;
+    default:
+        return false;
+    }
+}
+
 }  // namespace
 
 struct Overlay::Impl {
-    std::mutex mutex;  // on_event (event poll) vs draw (present) vs on_vblank (guest)
     OverlayContext ctx;
-    bool open = false, failed = false, ready = false;
+
+    // ---- shared between the game thread and the worker, under `q` ----------------------------
+    std::mutex q;
+    std::condition_variable cv;
+    std::deque<SDL_Event> events;
+    std::vector<std::function<void()>> guest_actions;  // run on the game thread
+    DrawMode want;
+    Image front;
+    bool want_open = false, stop = false;
+    std::uint64_t vblank_frame = 0;
+    bool shot_pending = false;
+    std::string pending_shot;
+    std::atomic<bool> open{false};
+
+    // ---- game thread only ------------------------------------------------------------------------
+    Image shown;
+
+    // ---- worker only -----------------------------------------------------------------------------
+    std::thread worker;
+    bool failed = false, ready = false;
     std::unique_ptr<Utf8FileInterface> files;
     std::unique_ptr<OverlaySystem> system;
     std::unique_ptr<SoftRenderer> soft;
     std::unique_ptr<MenuUi> ui;
     Rml::Context* context = nullptr;
-
-    // Where the menu sits: the visible part of the frame, and how the frame is drawn in the window.
     unsigned fw = 0, fh = 0, vis_x = 0, vis_y = 0, vis_w = 0, vis_h = 0;
     float draw_w = 0, draw_h = 0, draw_x = 0, draw_y = 0;  // the frame's rectangle, window pixels
-    std::uint64_t last_render = 0;
-    // DREAMCOMP_OVERLAY_PROFILE=1: time spent drawing, printed every 2 s while open.
-    bool profile = std::getenv("DREAMCOMP_OVERLAY_PROFILE") != nullptr;
-    std::uint64_t prof_mark = 0, prof_frames = 0, prof_renders = 0, prof_comp_ns = 0, prof_render_ns = 0;
+    DrawMode laid_out;
     bool need_render = true;
-
+    bool profile = std::getenv("DREAMCOMP_OVERLAY_PROFILE") != nullptr;
+    std::uint64_t prof_mark = 0, prof_renders = 0, prof_render_ns = 0;
     // Test script (DREAMCOMP_OVERLAY_KEYS="@FRAME,esc,shot:F.png,down,...").
     std::vector<std::string> script;
     std::uint64_t script_frame = 0, script_at = 0, script_done_at = 0;
     bool script_started = false;
-    std::string pending_shot;
+    bool has_script = false;  // fixed at construction: safe to read from either thread
 
     explicit Impl(const OverlayContext& c) : ctx(c) {
         script = split(std::getenv("DREAMCOMP_OVERLAY_KEYS"), ',');
@@ -88,17 +154,127 @@ struct Overlay::Impl {
             script_frame = std::strtoull(script.front().c_str() + 1, nullptr, 10);
             script.erase(script.begin());
         }
+        has_script = !script.empty();
+        worker = std::thread([this] { run(); });
     }
 
     ~Impl() {
+        {
+            std::lock_guard<std::mutex> lock(q);
+            stop = true;
+        }
+        cv.notify_all();
+        if (worker.joinable())
+            worker.join();
         ui.reset();
         if (ready)
             Rml::Shutdown();
     }
 
+    // ---- hand-over -------------------------------------------------------------------------------
+    void post(std::function<void()> f) {
+        std::lock_guard<std::mutex> lock(q);
+        guest_actions.push_back(std::move(f));
+    }
+
+    void run_guest_actions() {
+        std::vector<std::function<void()>> todo;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            todo.swap(guest_actions);
+        }
+        for (auto& f : todo) f();
+    }
+
+    // ---- worker ----------------------------------------------------------------------------------
+    void run() {
+        std::unique_lock<std::mutex> lock(q);
+        while (!stop) {
+            // Awake often while there is something to animate or a script to step; otherwise
+            // only when the game thread has news.
+            const bool busy = open.load() || (!script.empty() && !script_started) || script_started;
+            if (busy)
+                cv.wait_for(lock, std::chrono::milliseconds(15));
+            else
+                cv.wait(lock);
+            if (stop)
+                break;
+            std::deque<SDL_Event> evs;
+            evs.swap(events);
+            const bool do_open = want_open;
+            want_open = false;
+            const DrawMode mode = want;
+            const std::uint64_t frame = vblank_frame;
+            lock.unlock();
+            work(evs, do_open, mode, frame);
+            lock.lock();
+        }
+    }
+
+    void work(std::deque<SDL_Event>& evs, bool do_open, const DrawMode& mode, std::uint64_t frame) {
+        if (do_open)
+            open_menu();
+        if (!script_started && !script.empty() && frame >= script_frame && frame > 0) {
+            script_started = true;
+            script_at = SDL_GetTicks();
+            std::printf("overlay: script starts at frame %llu\n",
+                        static_cast<unsigned long long>(frame));
+        }
+        step_script();
+        if (!open.load() || !ready || failed)
+            return;
+        for (const SDL_Event& ev : evs) {
+            const unsigned wid = ev.type == SDL_EVENT_MOUSE_MOTION ? ev.motion.windowID : 0;
+            if (ui->handle(ev, [this, wid](float x, float y, float& cx, float& cy) {
+                    return map(x, y, wid, cx, cy);
+                }))
+                need_render = true;
+            if (!open.load())
+                return;  // closed by this event
+        }
+        if (mode.w == 0 || mode.h == 0)
+            return;
+        if (mode != laid_out) {
+            if (mode.frame)
+                layout(mode.w, mode.h, mode.vw, mode.vh);
+            else
+                layout_window(mode.w, mode.h);
+            laid_out = mode;
+            need_render = true;
+        }
+        ui->tick();
+        if (!ui->take_redraw() && !need_render)
+            return;
+        const std::uint64_t t0 = SDL_GetTicksNS();
+        context->Update();
+        soft->begin(vis_w, vis_h);
+        context->Render();
+        need_render = false;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            front.px = soft->pixels();
+            front.mode = mode;
+            front.w = soft->width();
+            front.h = soft->height();
+            front.x = vis_x;
+            front.y = vis_y;
+            ++front.seq;
+        }
+        ++prof_renders;
+        prof_render_ns += SDL_GetTicksNS() - t0;
+        const std::uint64_t now = SDL_GetTicks();
+        if (profile && now - prof_mark > 2000) {
+            std::printf("overlay: %llu renders, %.2f ms each (on the overlay thread)\n",
+                        static_cast<unsigned long long>(prof_renders),
+                        prof_render_ns / 1e6 / std::max<std::uint64_t>(1, prof_renders));
+            prof_mark = now;
+            prof_renders = prof_render_ns = 0;
+        }
+    }
+
     bool init() {
         if (ready)
-            return true;
+            return !failed;
         if (failed)
             return false;
         files = std::make_unique<Utf8FileInterface>();
@@ -119,28 +295,36 @@ struct Overlay::Impl {
         UiConfig cfg{ctx.settings, ctx.port, ctx.config, ctx.exe_dir, ctx.version};
         UiHost host;
         host.close_panel = [this] { close(); };
-        host.exit_game = [] {
+        host.exit_game = [this] {
             std::printf("overlay: exit game\n");
-            if (dream::host::host_controls().quit)
-                dream::host::host_controls().quit();
+            post([] {
+                if (dream::host::host_controls().quit)
+                    dream::host::host_controls().quit();
+            });
         };
         host.open_bindings = [this] {
             std::printf("overlay: opening the binding screen\n");
             close();
-            if (dream::host::host_controls().open_bindings)
-                dream::host::host_controls().open_bindings();
+            post([] {
+                if (dream::host::host_controls().open_bindings)
+                    dream::host::host_controls().open_bindings();
+            });
         };
         host.applied = [this] {
-            if (ctx.applied)
-                ctx.applied();
+            post([this] {
+                if (ctx.applied)
+                    ctx.applied();
+            });
         };
         host.bindings_path = [] {
             const auto& hc = dream::host::host_controls();
             return hc.bindings_path ? hc.bindings_path() : std::string();
         };
-        host.bindings_changed = [] {
-            if (dream::host::host_controls().reload_bindings)
-                dream::host::host_controls().reload_bindings();
+        host.bindings_changed = [this] {
+            post([] {
+                if (dream::host::host_controls().reload_bindings)
+                    dream::host::host_controls().reload_bindings();
+            });
         };
         ui = std::make_unique<MenuUi>(cfg, Mode::InGame, host);
         if (!context || !ui->load(context, &err)) {
@@ -154,21 +338,23 @@ struct Overlay::Impl {
     void open_menu() {
         if (!init()) {
             // No menu to show: Escape still has to end the game somehow.
-            if (dream::host::host_controls().quit)
-                dream::host::host_controls().quit();
+            open = false;
+            post([] {
+                if (dream::host::host_controls().quit)
+                    dream::host::host_controls().quit();
+            });
             return;
         }
-        open = true;
         need_render = true;
+        laid_out = DrawMode{};
         ui->refresh_pads();
         ui->open_panel();  // the last tab used
         std::printf("overlay: open\n");
     }
 
     void close() {
-        if (!open)
+        if (!open.exchange(false))
             return;
-        open = false;
         std::printf("overlay: closed\n");
     }
 
@@ -186,28 +372,16 @@ struct Overlay::Impl {
         return true;
     }
 
-    bool on_event(const SDL_Event& ev) {
-        if (!open) {
-            const bool esc = ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE &&
-                             !ev.key.repeat;
-            const bool select = ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
-                                ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK;
-            if (esc || select) {
-                std::printf("overlay: opened by %s\n", esc ? "Escape" : "a pad's Select/Back");
-                open_menu();
-                return true;
-            }
-            return false;
-        }
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F1)
-            return false;  // the engine's binding screen still answers F1
-        const unsigned wid = ev.type == SDL_EVENT_MOUSE_MOTION ? ev.motion.windowID : 0;
-        const bool used = ui->handle(ev, [this, wid](float x, float y, float& cx, float& cy) {
-            return map(x, y, wid, cx, cy);
-        });
-        if (used)
-            need_render = true;
-        return used;
+    // The panel covers the window 1:1 (the GPU path), so the mouse maps straight through.
+    void layout_window(unsigned vw, unsigned vh) {
+        fw = vis_w = vw;
+        fh = vis_h = vh;
+        vis_x = vis_y = 0;
+        draw_x = draw_y = 0.0f;
+        draw_w = static_cast<float>(vw);
+        draw_h = static_cast<float>(vh);
+        context->SetDimensions(Rml::Vector2i(static_cast<int>(vw), static_cast<int>(vh)));
+        context->SetDensityIndependentPixelRatio(static_cast<float>(vh) / 720.0f);
     }
 
     // The part of the frame the window shows, as the presenter fits it (present.cpp).
@@ -235,122 +409,52 @@ struct Overlay::Impl {
         draw_y = (static_cast<float>(vh) - draw_h) * 0.5f;
         const unsigned nw = std::min(w, static_cast<unsigned>(static_cast<float>(w) / s0 + 0.5f));
         const unsigned nh = std::min(h, static_cast<unsigned>(static_cast<float>(h) / s1 + 0.5f));
-        if (nw != vis_w || nh != vis_h || w != fw || h != fh) {
-            fw = w;
-            fh = h;
-            vis_w = std::max(1u, nw);
-            vis_h = std::max(1u, nh);
-            vis_x = (w - vis_w) / 2;
-            vis_y = (h - vis_h) / 2;
-            context->SetDimensions(Rml::Vector2i(static_cast<int>(vis_w), static_cast<int>(vis_h)));
-            context->SetDensityIndependentPixelRatio(static_cast<float>(vis_h) / 720.0f);
-            need_render = true;
-        }
-    }
-
-    void draw(std::uint32_t* px, unsigned w, unsigned h, unsigned vw, unsigned vh) {
-        if (!open || !ready || failed || !px || w == 0 || h == 0)
-            return;
-        layout(w, h, vw, vh);
-        ui->tick();
-        const std::uint64_t now = SDL_GetTicks();
-        const std::uint64_t t0 = SDL_GetTicksNS();
-        if (ui->take_redraw() || need_render || now - last_render > 1000) {
-            context->Update();
-            soft->begin(vis_w, vis_h);
-            context->Render();
-            need_render = false;
-            last_render = now;
-            ++prof_renders;
-            prof_render_ns += SDL_GetTicksNS() - t0;
-        }
-        const std::uint64_t t1 = SDL_GetTicksNS();
-        composite(px, w, h, soft->pixels().data(), soft->width(), soft->height(), vis_x, vis_y);
-        prof_comp_ns += SDL_GetTicksNS() - t1;
-        ++prof_frames;
-        if (profile && now - prof_mark > 2000) {
-            std::printf("overlay: %llu frames, composite %.2f ms/frame; %llu renders, %.2f ms each\n",
-                        static_cast<unsigned long long>(prof_frames),
-                        prof_comp_ns / 1e6 / std::max<std::uint64_t>(1, prof_frames),
-                        static_cast<unsigned long long>(prof_renders),
-                        prof_render_ns / 1e6 / std::max<std::uint64_t>(1, prof_renders));
-            prof_mark = now;
-            prof_frames = prof_renders = prof_comp_ns = prof_render_ns = 0;
-        }
-        if (!pending_shot.empty()) {
-            if (dream::render::png::write_file(std::filesystem::u8path(pending_shot), px, w, h))
-                std::printf("overlay: wrote %s (%ux%u)\n", pending_shot.c_str(), w, h);
-            else
-                std::fprintf(stderr, "overlay: cannot write %s\n", pending_shot.c_str());
-            pending_shot.clear();
-        }
-    }
-
-    const std::uint32_t* render_window(unsigned vw, unsigned vh, bool& changed) {
-        changed = false;
-        if (!open || !ready || failed || vw == 0 || vh == 0 || !pending_shot.empty())
-            return nullptr;
-        if (vw != vis_w || vh != vis_h || fw != vw || fh != vh || vis_x != 0 || vis_y != 0) {
-            fw = vw;
-            fh = vh;
-            vis_w = vw;
-            vis_h = vh;
-            vis_x = vis_y = 0;
-            // The panel covers the window 1:1, so the mouse maps straight through (map()).
-            draw_x = draw_y = 0.0f;
-            draw_w = static_cast<float>(vw);
-            draw_h = static_cast<float>(vh);
-            context->SetDimensions(Rml::Vector2i(static_cast<int>(vw), static_cast<int>(vh)));
-            context->SetDensityIndependentPixelRatio(static_cast<float>(vh) / 720.0f);
-            need_render = true;
-        }
-        ui->tick();
-        const std::uint64_t now = SDL_GetTicks();
-        const std::uint64_t t0 = SDL_GetTicksNS();
-        if (ui->take_redraw() || need_render || now - last_render > 1000) {
-            context->Update();
-            soft->begin(vw, vh);
-            context->Render();
-            need_render = false;
-            last_render = now;
-            changed = true;
-            ++prof_renders;
-            prof_render_ns += SDL_GetTicksNS() - t0;
-        }
-        ++prof_frames;
-        return soft->pixels().data();
+        fw = w;
+        fh = h;
+        vis_w = std::max(1u, nw);
+        vis_h = std::max(1u, nh);
+        vis_x = (w - vis_w) / 2;
+        vis_y = (h - vis_h) / 2;
+        context->SetDimensions(Rml::Vector2i(static_cast<int>(vis_w), static_cast<int>(vis_h)));
+        context->SetDensityIndependentPixelRatio(static_cast<float>(vis_h) / 720.0f);
     }
 
     // One scripted input every 150 ms: keys and pad buttons go into SDL's queue, so they take the
-    // same path as real ones (engine poll -> event filter -> on_event).
+    // same path as real ones (event pump -> engine poll -> event filter -> on_event).
     void step_script() {
         if (!script_started)
             return;
         const std::uint64_t now = SDL_GetTicks();
         if (script.empty()) {
-            if (open && script_done_at && now > script_done_at + 5000) {
+            if (open.load() && script_done_at && now > script_done_at + 5000) {
                 std::printf("overlay: script finished with the menu open; resuming\n");
                 close();
             }
             return;
         }
-        if (now < script_at || !pending_shot.empty())
-            return;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            if (now < script_at || shot_pending)
+                return;
+        }
         const std::string k = script.front();
         script.erase(script.begin());
         script_at = now + 150;
         if (script.empty())
             script_done_at = now;
+        const bool showing = ui && open.load();
         std::printf("overlay: script %s (screen %s, focus %s)\n", k.c_str(),
-                    ui && open ? ui->screen_name().c_str() : "-",
-                    ui && open ? ui->focus_id().c_str() : "-");
+                    showing ? ui->screen_name().c_str() : "-",
+                    showing ? ui->focus_id().c_str() : "-");
         if (k.rfind("shot:", 0) == 0) {
+            std::lock_guard<std::mutex> lock(q);
             pending_shot = k.substr(5);
+            shot_pending = true;
             need_render = true;
             return;
         }
         if (k.rfind("click:", 0) == 0) {
-            Rml::Element* el = ui ? ui->element(k.substr(6)) : nullptr;
+            Rml::Element* el = showing ? ui->element(k.substr(6)) : nullptr;
             if (!el || draw_w <= 0)
                 return;
             const Rml::Vector2f pos = el->GetAbsoluteOffset(Rml::BoxArea::Border);
@@ -400,14 +504,115 @@ struct Overlay::Impl {
         SDL_PushEvent(&e);
     }
 
-    void on_vblank(std::uint64_t frame) {
-        if (!script_started && !script.empty() && frame >= script_frame) {
-            script_started = true;
-            script_at = SDL_GetTicks();
-            std::printf("overlay: script starts at frame %llu\n",
-                        static_cast<unsigned long long>(frame));
+    // ---- game thread -----------------------------------------------------------------------------
+    bool on_event(const SDL_Event& ev) {
+        if (!open.load()) {
+            const bool esc = ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE &&
+                             !ev.key.repeat;
+            const bool select = ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                                ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK;
+            if (!esc && !select)
+                return false;
+            std::printf("overlay: opened by %s\n", esc ? "Escape" : "a pad's Select/Back");
+            open = true;  // the game's input stops at once; the first image follows
+            shown = Image{};  // never show the panel as it was when last closed
+            {
+                std::lock_guard<std::mutex> lock(q);
+                want_open = true;
+                events.clear();
+            }
+            cv.notify_one();
+            return true;
         }
-        step_script();
+        const bool used = consumed_while_open(ev);
+        if (used || ev.type == SDL_EVENT_GAMEPAD_ADDED || ev.type == SDL_EVENT_GAMEPAD_REMOVED) {
+            {
+                std::lock_guard<std::mutex> lock(q);
+                if (events.size() < 512)
+                    events.push_back(ev);
+            }
+            cv.notify_one();
+        }
+        return used;
+    }
+
+    // The newest finished image for `mode`, if it is newer than what `shown` holds.
+    bool take_image(const DrawMode& mode) {
+        bool notify = false;
+        bool got = false;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            if (want != mode) {
+                want = mode;
+                notify = true;
+            }
+            if (front.seq != shown.seq && front.mode == mode && !front.px.empty()) {
+                shown.px.swap(front.px);
+                shown.mode = front.mode;
+                shown.w = front.w;
+                shown.h = front.h;
+                shown.x = front.x;
+                shown.y = front.y;
+                shown.seq = front.seq;
+                got = true;
+            }
+        }
+        if (notify)
+            cv.notify_one();
+        return got;
+    }
+
+    const std::uint32_t* render_window(unsigned vw, unsigned vh, bool& changed) {
+        changed = false;
+        run_guest_actions();
+        if (!open.load() || vw == 0 || vh == 0)
+            return nullptr;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            if (shot_pending)
+                return nullptr;  // the screenshot is taken through draw()
+        }
+        const DrawMode mode{vw, vh, vw, vh, false};
+        changed = take_image(mode);
+        if (shown.mode != mode || shown.px.size() != static_cast<std::size_t>(vw) * vh)
+            return nullptr;  // not drawn at this size yet (a resize): nothing this frame
+        return shown.px.data();
+    }
+
+    void draw(std::uint32_t* px, unsigned w, unsigned h, unsigned vw, unsigned vh) {
+        run_guest_actions();
+        if (!open.load() || !px || w == 0 || h == 0)
+            return;
+        const DrawMode mode{w, h, vw, vh, true};
+        take_image(mode);
+        if (shown.mode != mode || shown.px.empty())
+            return;
+        composite(px, w, h, shown.px.data(), shown.w, shown.h, shown.x, shown.y);
+        std::string shot;
+        {
+            std::lock_guard<std::mutex> lock(q);
+            if (shot_pending) {
+                shot = pending_shot;
+                shot_pending = false;
+                pending_shot.clear();
+            }
+        }
+        if (!shot.empty()) {
+            if (dream::render::png::write_file(std::filesystem::u8path(shot), px, w, h))
+                std::printf("overlay: wrote %s (%ux%u)\n", shot.c_str(), w, h);
+            else
+                std::fprintf(stderr, "overlay: cannot write %s\n", shot.c_str());
+        }
+    }
+
+    void on_vblank(std::uint64_t frame) {
+        run_guest_actions();
+        {
+            std::lock_guard<std::mutex> lock(q);
+            vblank_frame = frame;
+        }
+        if (has_script && frame == script_frame)
+            cv.notify_one();
     }
 };
 
@@ -417,24 +622,15 @@ Overlay::~Overlay() { delete impl_; }
 bool Overlay::on_event(const void* sdl_event) {
     if (!sdl_event)
         return false;
-    std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->on_event(*static_cast<const SDL_Event*>(sdl_event));
 }
-bool Overlay::is_open() const {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->open;
-}
+bool Overlay::is_open() const { return impl_->open.load(); }
 void Overlay::draw(std::uint32_t* rgba, unsigned w, unsigned h, unsigned view_w, unsigned view_h) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->draw(rgba, w, h, view_w, view_h);
 }
 const std::uint32_t* Overlay::render_window(unsigned view_w, unsigned view_h, bool& changed) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->render_window(view_w, view_h, changed);
 }
-void Overlay::on_vblank(std::uint64_t frame) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    impl_->on_vblank(frame);
-}
+void Overlay::on_vblank(std::uint64_t frame) { impl_->on_vblank(frame); }
 
 }  // namespace dreamcomp::frontend

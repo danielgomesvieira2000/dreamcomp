@@ -38,7 +38,9 @@ enum class Outcome {
 };
 
 // The same menu over the running game (Escape / pad Select toggles it). Created by the core
-// extension when the engine opens its window; everything runs on the guest thread.
+// extension when the engine opens its window. Its public calls come from the game thread; the
+// menu itself (RmlUi, rendering) runs on its own worker thread, and what it asks of the game
+// (OverlayContext::applied, quitting, the binding screen) runs back on the game thread.
 struct OverlayContext {
     Settings* settings = nullptr;
     const PortInfo* port = nullptr;
@@ -61,9 +63,8 @@ public:
     // over the game on the GPU. `changed`: it was redrawn since the last call. Null while closed
     // (or while a test screenshot of the composited frame is pending: draw() takes that one).
     const std::uint32_t* render_window(unsigned view_w, unsigned view_h, bool& changed);
-    // Each vblank (test script: DREAMCOMP_OVERLAY_KEYS). on_event() is called from the window's
-    // event poll and draw() from the present; they share a mutex, so they may run on different
-    // threads.
+    // Each vblank: runs what the menu asked of the game, and times the test script
+    // (DREAMCOMP_OVERLAY_KEYS).
     void on_vblank(std::uint64_t frame);
 
     struct Impl;

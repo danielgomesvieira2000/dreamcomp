@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 namespace dreamcomp {
@@ -37,7 +38,17 @@ std::filesystem::path default_config_dir(const std::string& port_id) {
     return base / "dreamcomp" / port_id;
 }
 
+namespace {
+// One lock for every Settings object: the in-game menu edits them on its own thread while the
+// game thread reads them (a rare, short critical section either way).
+std::recursive_mutex& settings_mutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+}  // namespace
+
 void Settings::load(const std::filesystem::path& file) {
+    std::lock_guard<std::recursive_mutex> lock(settings_mutex());
     file_ = file;
     values_.clear();
     dirty_ = false;
@@ -55,6 +66,7 @@ void Settings::load(const std::filesystem::path& file) {
 }
 
 bool Settings::save() const {
+    std::lock_guard<std::recursive_mutex> lock(settings_mutex());
     if (file_.empty())
         return false;
     std::error_code ec;
@@ -75,6 +87,7 @@ bool Settings::save() const {
 }
 
 std::string Settings::get(const std::string& key, const std::string& def) const {
+    std::lock_guard<std::recursive_mutex> lock(settings_mutex());
     const auto it = values_.find(key);
     return it == values_.end() ? def : it->second;
 }
@@ -107,6 +120,7 @@ float Settings::get_float(const std::string& key, float def) const {
 }
 
 void Settings::set(const std::string& key, const std::string& value) {
+    std::lock_guard<std::recursive_mutex> lock(settings_mutex());
     auto& slot = values_[key];
     if (slot != value) {
         slot = value;
