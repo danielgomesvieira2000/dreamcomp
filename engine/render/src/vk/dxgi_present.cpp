@@ -90,7 +90,7 @@ struct DxgiPresenter::Impl {
     int min_depth = 1;  // DREAM_DXGI_MIN_DEPTH: never shallower than this (1-3)
     std::deque<std::chrono::steady_clock::time_point> recent_skips;
     std::chrono::steady_clock::time_point retry_at{}, shallow_since{};
-    std::chrono::seconds backoff{60};
+    std::chrono::seconds backoff{10};
     std::uint64_t deepened = 0;
     double deep_s = 0;  // time spent deeper than one frame
     int max_depth_seen = 1;
@@ -437,7 +437,7 @@ bool DxgiPresenter::present(std::uint32_t i, Mode mode) {
             // A retry that held for two minutes resets the back-off.
             if (m.shallow_since.time_since_epoch().count() != 0 &&
                 now_c - m.shallow_since > std::chrono::minutes(2))
-                m.backoff = std::chrono::seconds(60);
+                m.backoff = std::chrono::seconds(10);
             ++m.depth;
             m.max_depth_seen = std::max(m.max_depth_seen, m.depth);
             m.recent_skips.clear();

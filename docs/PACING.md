@@ -101,12 +101,20 @@ extra refresh of latency; frames are phase-locked to the vblank grid (start so t
 recent frame is presented 3 ms before its vblank; held until then if early; Windows
 high-resolution waitable timer for the waits) while one frame waits. When skips come often (2 in
 30 s) the presenter lets one more frame wait (up to 3) and pacing returns to the rate clock,
-which catches up; it retries one less after 60 s, backing off to 4 minutes. `DREAM_SPIN_MS=N`
+which catches up; it retries one less after 10 s, backing off to 4 minutes. `DREAM_SPIN_MS=N`
 busy-waits the last N ms of each wait (fresher input, more power); `DREAM_DXGI_MIN_DEPTH`,
 `DREAM_DXGI_LATEST=1`, `DREAM_PHASE_LOCK=0` exist for measurements.
 
-Not verified: the final adaptive version plugged in (its battery run deepened during boot and
-sat at depth 3, 61.8 ms); a display above 60 Hz; other GPUs.
+Plugged in (charger confirmed, 90 s fight, latency per 10 s of the capture):
+
+| Setting | Display latency | Repeated frames |
+|---|---|---|
+| Standard | 47.7-48.1 ms in every slice | 1 in 90 s |
+| Low, first retry after 60 s | 50-60 ms for 45 s (deepened in the boot and loading screens), then 34.8-35.1 ms | 1 in 90 s |
+| Low, first retry after 10 s (current) | 35.0 ms, one 20 s stretch at 44.8 ms (pre-round camera sweep), mean 37.0 ms | 3 in 90 s |
+
+So plugged in, Low is ~11-13 ms less delay for about two more repeated frames a minute. On battery
+it is not worth it (above). Not verified: a display above 60 Hz; other GPUs.
 
 ## Changes
 

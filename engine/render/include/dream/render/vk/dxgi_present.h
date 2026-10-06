@@ -49,7 +49,7 @@ public:
     //            the queue filled and stayed full: 52-58 ms). The depth adapts: one frame waiting
     //            while frames arrive on time, one more (up to three) whenever skips come often (a
     //            slow or battery-powered machine, where emulating a frame can take longer than a
-    //            refresh), retrying one less after 30 s, backing off to 4 min while that keeps
+    //            refresh), retrying one less after 10 s, backing off to 4 min while that keeps
     //            failing. The default; the caller paces.
     //   Latest:  sync interval 0 without tearing (mailbox). On Intel's driver this dropped about
     //            one frame a second even with perfectly regular presents (the replaced frames
