@@ -1500,7 +1500,15 @@ void usage(const char* argv0, std::FILE* out) {
 // DREAM_PROFILE: host time spent drawing renders (dreamcomp).
 static std::uint64_t g_render_ns = 0, g_renders = 0;
 
+// Crash reports (dreamcomp): defined at the end of this file, away from <windows.h>'s macros.
+void install_crash_handler();
+
 int main(int argc, char** argv) {
+    install_crash_handler();
+    if (std::getenv("DREAM_CRASH_TEST")) {  // checks the crash report itself
+        volatile int* nowhere = nullptr;
+        *nowhere = 1;
+    }
     // Extensions may rewrite the command line before it is parsed (host_ext.h). The rewritten
     // strings must outlive every pointer taken into them below, hence the statics.
     static std::vector<std::string> ext_args;
@@ -2892,3 +2900,94 @@ int main(int argc, char** argv) {
         rc = 1;
     return rc;
 }
+
+// ---- crash reports (dreamcomp) ------------------------------------------------------------------
+// A player's crash used to leave an empty log: stdout is buffered and dies with the process. Now
+// stdout is unbuffered, and an unhandled exception on any thread prints what, where (module and
+// offset, for the map file) and on which thread, and writes a minidump beside the bindings file
+// (%APPDATA%/dream-recomp/dream-recomp/crash-<time>.dmp) for a debugger.
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+namespace {
+
+#pragma pack(push, 4)  // as dbghelp.h declares MINIDUMP_EXCEPTION_INFORMATION
+struct MiniDumpExceptionInfo {
+    DWORD ThreadId;
+    EXCEPTION_POINTERS* ExceptionPointers;
+    BOOL ClientPointers;
+};
+#pragma pack(pop)
+using MiniDumpWriteDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, int, MiniDumpExceptionInfo*,
+                                          void*, void*);
+
+LONG WINAPI on_crash(EXCEPTION_POINTERS* ep) {
+    static volatile LONG once = 0;
+    if (InterlockedExchange(&once, 1) != 0)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+    void* addr = r->ExceptionAddress;
+    char module[MAX_PATH] = "?";
+    HMODULE mod = nullptr;
+    std::uintptr_t offset = 0;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(addr), &mod)) {
+        GetModuleFileNameA(mod, module, sizeof module);
+        offset = reinterpret_cast<std::uintptr_t>(addr) - reinterpret_cast<std::uintptr_t>(mod);
+    }
+    std::fprintf(stderr,
+                 "\ncrash: exception 0x%08lX at %p (%s + 0x%llx) on thread %lu",
+                 static_cast<unsigned long>(r->ExceptionCode), addr, module,
+                 static_cast<unsigned long long>(offset),
+                 static_cast<unsigned long>(GetCurrentThreadId()));
+    if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2)
+        std::fprintf(stderr, ", %s of %p", r->ExceptionInformation[0] == 1 ? "write" : "read",
+                     reinterpret_cast<void*>(r->ExceptionInformation[1]));
+    std::fprintf(stderr, "\n");
+    // The dump: where the bindings live, which every port has and the player can find.
+    std::string dir = dream::render::vk::default_bindings_path();
+    const auto slash = dir.find_last_of("/\\");
+    dir = slash == std::string::npos ? std::string() : dir.substr(0, slash + 1);
+    char name[64];
+    std::snprintf(name, sizeof name, "crash-%llu.dmp",
+                  static_cast<unsigned long long>(std::time(nullptr)));
+    const std::string path = dir + name;
+    if (HMODULE dbghelp = LoadLibraryA("dbghelp.dll")) {
+        auto write = reinterpret_cast<MiniDumpWriteDumpFn>(
+            reinterpret_cast<void*>(GetProcAddress(dbghelp, "MiniDumpWriteDump")));
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (write && file != INVALID_HANDLE_VALUE) {
+            MiniDumpExceptionInfo info{GetCurrentThreadId(), ep, FALSE};
+            // MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo: small, with stacks.
+            if (write(GetCurrentProcess(), GetCurrentProcessId(), file, 0x40 | 0x1000, &info,
+                      nullptr, nullptr))
+                std::fprintf(stderr, "crash: minidump written to %s\n", path.c_str());
+        }
+        if (file != INVALID_HANDLE_VALUE)
+            CloseHandle(file);
+    }
+    std::fflush(stderr);
+    std::fflush(stdout);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+}  // namespace
+
+void install_crash_handler() {
+    // Unbuffered: what was printed before a crash is in the log after it.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    SetUnhandledExceptionFilter(on_crash);
+}
+#else
+void install_crash_handler() {
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+}
+#endif

@@ -41,6 +41,11 @@ struct PortVersion {
 ")
     target_sources(${id}_boot PRIVATE ${_ver_src})
   endif()
+  # A linker map beside the executable: a crash report's "module + offset" (boot_main.cpp's
+  # crash handler) names a function with it, at no cost to the build or the program.
+  if(MSVC)
+    target_link_options(${id}_boot PRIVATE "/MAP")
+  endif()
   if(ARG_OUTPUT_NAME)
     set_target_properties(${id}_boot PROPERTIES OUTPUT_NAME ${ARG_OUTPUT_NAME})
   endif()
