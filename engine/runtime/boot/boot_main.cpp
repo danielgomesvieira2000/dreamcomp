@@ -2238,10 +2238,13 @@ int main(int argc, char** argv) {
         // frame that took too long is gone and pretending otherwise makes the audio stutter.
         const auto started = std::chrono::steady_clock::now();
         // Wall-clock time the guest was stopped for, which the pacing below owes back. Without it
-        // the run would sprint to catch up the moment the binding screen closed.
-        auto paused_for = std::chrono::steady_clock::duration::zero();
+        // the run would sprint to catch up the moment the binding screen closed. Held by the
+        // callback itself (dreamcomp): this block ends before the first vblank, so a reference to
+        // a local here read a dead stack slot (hundreds of seconds), the guest counted as far
+        // ahead of the clock and was never slowed down whenever vsync did not pace it.
         auto previous_vblank = std::move(sys.spg.on_vblank_out);
-        sys.spg.on_vblank_out = [&, previous_vblank, started] {
+        sys.spg.on_vblank_out = [&, previous_vblank, started,
+                                 paused_for = std::chrono::steady_clock::duration::zero()]() mutable {
             if (previous_vblank)
                 previous_vblank();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
