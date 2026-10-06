@@ -2,6 +2,7 @@
 // renderer, and the probe draws a triangle to prove the stack works on this machine.
 #pragma once
 
+#include <chrono>
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -87,6 +88,11 @@ public:
     bool fullscreen() const noexcept { return fullscreen_; }
     // Refresh rate of the display the window is on, in Hz; 0 when unknown (dreamcomp).
     float refresh_rate() const noexcept;
+    // The display's vblank grid (dreamcomp): the time of a recent vblank and the refresh period,
+    // on std::chrono::steady_clock. Windows: from the compositor (DWM). False where the platform
+    // does not say, and then nothing can be phase-locked to the display.
+    bool vblank_grid(std::chrono::steady_clock::time_point& vblank,
+                     std::chrono::nanoseconds& period) const noexcept;
 
     // Held down as of the last poll().
     bool held(Control c) const noexcept;

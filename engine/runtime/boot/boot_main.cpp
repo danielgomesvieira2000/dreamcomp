@@ -128,6 +128,49 @@ void print_guest_backtrace() {
 // written region can be worked out precisely enough to be safe, --framebuffer-writeback turns it
 // on and the default leaves video memory alone. Flycast reaches the same conclusion from the other
 // direction: its framebuffer emulation is off unless a title needs it.
+// Display sync (dreamcomp, --sync-display): when the display refreshes within 0.5 % of the guest's
+// frame rate, the pacing clock runs at the display's rate instead of the guest's. A 59.94 Hz game
+// on a 60 Hz panel otherwise falls one frame behind every 16.7 s and the panel shows a frame twice.
+// The rate is aimed 0.01 % under the display's, so the swapchain queue stays drained (the lowest
+// latency) and the panel repeats one frame about every 2.8 minutes instead. The game runs 0.1 %
+// fast (60 for 59.94); the audio sink's rate control absorbs it. Only the rate is matched, not
+// the phase: on Intel's Windows Vulkan driver (a compositor copy) presenting at a chosen point
+// before vblank changed neither latency nor smoothness (docs/PACING.md in dreamcomp).
+struct DisplaySync {
+    bool enabled = false;
+    double guest_frame_s = 0;  // average guest frame length, from cycles per vblank
+    std::uint64_t last_cycles = 0;
+    double display_hz = 0, factor = 1.0;
+    std::uint64_t locked = 0, unlocked = 0;
+    // Recent guest frame lengths in host time (pads read -> next vblank), for the report.
+    std::vector<float> emu_ms;
+    double note_guest_frame(std::uint64_t cycles) {
+        double s = 0;
+        if (last_cycles && cycles > last_cycles) {
+            s = static_cast<double>(cycles - last_cycles) / 200e6;
+            guest_frame_s = guest_frame_s == 0 ? s : guest_frame_s * 0.95 + s * 0.05;
+        }
+        last_cycles = cycles;
+        return s;
+    }
+    void report() const {
+        if (enabled)
+            std::printf("display sync: %llu frames at the display's rate (%.3f Hz display, guest "
+                        "%.3f Hz, clock x%.5f), %llu at the guest's\n",
+                        static_cast<unsigned long long>(locked), display_hz,
+                        guest_frame_s > 0 ? 1.0 / guest_frame_s : 0.0, factor,
+                        static_cast<unsigned long long>(unlocked));
+        if (emu_ms.size() >= 10) {
+            std::vector<float> v = emu_ms;
+            std::sort(v.begin(), v.end());
+            std::printf("pacing: host time per guest frame (pads read -> vblank) p50 %.2f p90 %.2f "
+                        "p99 %.2f max %.1f ms\n",
+                        static_cast<double>(v[v.size() / 2]), static_cast<double>(v[v.size() * 9 / 10]),
+                        static_cast<double>(v[v.size() * 99 / 100]), static_cast<double>(v.back()));
+        }
+    }
+};
+
 // Frame pacing as the player sees it (dreamcomp): the wall-clock interval between successive
 // vblanks of a real-time run, and how far the pacing sleep overshot. Printed as the `pacing:`
 // report line; a stutter shows up as late frames long before it shows in the average speed.
@@ -1018,6 +1061,7 @@ struct Live {
     // (guest time elapsed per second of wall clock, where 1.00x is the console's own pace).
     bool show_fps = false;
     bool input_polled = false, window_open = true;  // poll_input() (dreamcomp)
+    DisplaySync sync;                                // --sync-display (dreamcomp)
     // The binding screen (F1, or a pad's select button). The guest is stopped while it is up, so
     // nobody rebinds a control mid-corner.
     dream::render::InputMenu menu;
@@ -1453,6 +1497,8 @@ void usage(const char* argv0, std::FILE* out) {
         "  --interpolate          draw a blended frame between two game frames (needs a display\n"
         "                         above 60 Hz to be seen; docs/INTERPOLATION.md in dreamcomp)\n"
         "  --interpolate-auto     the same, only when the window's display is above 60 Hz\n"
+        "  --sync-display         pace at the display's rate when it is within 0.5% of the\n"
+        "                         game's (60 Hz for a 59.94 Hz game: +0.1% speed, no repeats)\n"
         "  --fps                  start with the on-screen frame-rate counter showing\n"
         "  --present-mode M       vsync (default), mailbox or immediate. The default paces the\n"
         "                         whole run to the panel, so --unthrottled with a window measures\n"
@@ -1600,6 +1646,7 @@ int main(int argc, char** argv) {
     bool fullscreen = false;              // --fullscreen (dreamcomp); Alt+Enter toggles
     bool interpolate_frames = false;      // --interpolate (dreamcomp): a blended frame between renders
     bool interpolate_auto = false;        // --interpolate-auto: only on displays above 60 Hz
+    bool sync_display = false;            // --sync-display (dreamcomp): pace at the display's rate
     std::string vmu;                  // --vmu FILE: a 128 KB memory-card image in the standard
                                       // layout, as any Dreamcast tool or emulator writes. Writes
                                       // go back to the file. Never committed: owner data.
@@ -1787,6 +1834,8 @@ int main(int argc, char** argv) {
             interpolate_frames = true;
         else if (!std::strcmp(argv[i], "--interpolate-auto"))
             interpolate_auto = true;
+        else if (!std::strcmp(argv[i], "--sync-display"))
+            sync_display = true;
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc)
             scale = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) {
@@ -2162,6 +2211,7 @@ int main(int argc, char** argv) {
         live->interpolate = interpolate_frames || interpolate_auto;
         live->interpolate_only_above_60 = interpolate_auto && !interpolate_frames;
         live->pace_interpolation = !unthrottled;
+        live->sync.enabled = sync_display;
         // The host copy of every frame is only needed for write-back; everything else reads it on
         // demand. DREAM_NO_DIRECT_PRESENT=1 restores the copy for A/B measurements.
         {
@@ -2270,17 +2320,24 @@ int main(int argc, char** argv) {
         // Real time, so the title runs at the speed it was written for. The guest clock is the
         // reference: sleep only while ahead of it, never speed anything up to catch up, because a
         // frame that took too long is gone and pretending otherwise makes the audio stutter.
-        const auto started = std::chrono::steady_clock::now();
-        // Wall-clock time the guest was stopped for, which the pacing below owes back. Without it
-        // the run would sprint to catch up the moment the binding screen closed. Held by the
-        // callback itself (dreamcomp): this block ends before the first vblank, so a reference to
-        // a local here read a dead stack slot (hundreds of seconds), the guest counted as far
-        // ahead of the clock and was never slowed down whenever vsync did not pace it.
+        // The pacing clock (dreamcomp): the wall-clock time the current guest frame is due,
+        // advanced by each guest frame's length (divided by the display-sync factor). Held by the
+        // callback itself: this block ends before the first vblank (a reference to a local here
+        // once read a dead stack slot and pacing never slept). It restarts from now after a pause
+        // or a long stall, so the run never sprints to catch up.
         auto previous_vblank = std::move(sys.spg.on_vblank_out);
-        sys.spg.on_vblank_out = [&, previous_vblank, started,
-                                 paused_for = std::chrono::steady_clock::duration::zero()]() mutable {
+        sys.spg.on_vblank_out = [&, previous_vblank,
+                                 due = std::chrono::steady_clock::time_point{}]() mutable {
             if (previous_vblank)
                 previous_vblank();
+            const auto vblank_at = std::chrono::steady_clock::now();
+            auto& sync = live->sync;
+            if (live->pacing.input_read.time_since_epoch().count() != 0 &&
+                sync.emu_ms.size() < 2'000'000)
+                sync.emu_ms.push_back(std::chrono::duration<float, std::milli>(
+                                          vblank_at - live->pacing.input_read)
+                                          .count());
+            const double frame_s = sync.note_guest_frame(sys.ctx.cycles);
             live->pacing.presenting();
             if (!live->present(sys.spg.frames(), sys.ctx.cycles))
                 throw StopRun{"the window was closed"};
@@ -2288,7 +2345,6 @@ int main(int argc, char** argv) {
             // rebinds a control mid-corner, and a control being captured cannot also be played.
             // The window keeps presenting, so the screen still draws and still answers the player.
             if (live->menu.is_open()) {
-                const auto paused_at = std::chrono::steady_clock::now();
                 while (live->menu.is_open()) {
                     if (!live->present(sys.spg.frames(), sys.ctx.cycles))
                         throw StopRun{"the window was closed"};
@@ -2297,7 +2353,7 @@ int main(int argc, char** argv) {
                     // with.
                     std::this_thread::sleep_for(std::chrono::milliseconds(8));
                 }
-                paused_for += std::chrono::steady_clock::now() - paused_at;
+                due = {};  // start the clock again from now
             }
             // Pads are read after the pacing sleep (dreamcomp), right before the guest runs the
             // frame that uses them: read before the sleep, the input was a sleep older (about
@@ -2319,15 +2375,31 @@ int main(int argc, char** argv) {
                 read_pads();
                 return;
             }
-            const auto guest =
-                std::chrono::duration<double>(static_cast<double>(sys.ctx.cycles) / 200e6);
-            const auto target =
-                started + paused_for +
-                std::chrono::duration_cast<std::chrono::steady_clock::duration>(guest);
+            // Display sync: the clock's rate.
+            sync.factor = 1.0;
+            if (sync.enabled && !live->interpolate && sync.guest_frame_s > 0) {
+                std::chrono::steady_clock::time_point vb;
+                std::chrono::nanoseconds period{};
+                if (live->window.vblank_grid(vb, period) && period.count() > 0) {
+                    sync.display_hz = 1e9 / static_cast<double>(period.count());
+                    const double guest_hz = 1.0 / sync.guest_frame_s;
+                    if (std::abs(sync.display_hz - guest_hz) / guest_hz < 0.005)
+                        sync.factor = sync.display_hz * (1.0 - 1e-4) / guest_hz;
+                }
+                ++(sync.factor != 1.0 ? sync.locked : sync.unlocked);
+            }
             const auto now = std::chrono::steady_clock::now();
-            if (target > now && target - now < std::chrono::seconds(1)) {
-                std::this_thread::sleep_for(target - now);
-                live->pacing.slept(target);
+            const auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(frame_s / sync.factor));
+            // A stall of more than a few frames (loading, the window dragged) is not caught up:
+            // the frames that took too long are gone, and sprinting would only stutter the audio.
+            if (due.time_since_epoch().count() == 0 || now - (due + step) > std::chrono::milliseconds(50))
+                due = now;
+            else
+                due += step;
+            if (due > now) {
+                std::this_thread::sleep_until(due);
+                live->pacing.slept(due);
             }
             read_pads();
             live->pacing.vblank(sys.spg.frames(), live->renderer.textures().decoded,
@@ -2780,6 +2852,7 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(live->interp_jumped),
                 live->interp_rendered ? live->interp_ms / static_cast<double>(live->rendered) : 0.0);
         live->pacing.report();
+        live->sync.report();
         std::printf("textures: %u decoded in %.1f ms, uploads recorded in %.1f ms, %llu dropped "
                     "because the guest rewrote them\n",
                     live->renderer.textures().decoded,

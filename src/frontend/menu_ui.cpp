@@ -659,6 +659,15 @@ std::string MenuUi::tab_general() {
                    "of 120 Hz or more.<br/><b>120</b>: always blend.<br/><b>60</b>: only the "
                    "game's own frames.<br/><br/>The game itself always runs at 60.",
                    false);
+    s += row_radio("frame_timing", "Frame timing",
+                   {{"display", "Match display"}, {"exact", "Exact 59.94 Hz"}},
+                   draft_.get("frame_timing", "display") == "exact" ? "exact" : "display",
+                   "<b>Match display</b> runs the game at your display's rate when it is within "
+                   "half a percent of the Dreamcast's 59.94 Hz (a 60 Hz screen: 0.1 % faster, "
+                   "which nobody can hear or see), so every refresh gets a new frame.<br/><br/>"
+                   "<b>Exact 59.94 Hz</b> keeps the console's timing; a 60 Hz screen then shows "
+                   "one frame twice about every 17 seconds.",
+                   false);
     s += row_button("r-about", "readme", "About", "Read me", kAboutText);
     return s;
 }
@@ -1141,6 +1150,9 @@ void MenuUi::adjust(const std::string& key, int step) {
         draft_.set("fit", cycle(fit_choices(), draft_.get("fit", "crop"), step));
     } else if (key == "fps") {
         draft_.set("fps", cycle(fps_choices(), draft_.get("fps", "auto"), step));
+    } else if (key == "frame_timing") {
+        draft_.set("frame_timing", cycle({{"display", ""}, {"exact", ""}},
+                                         draft_.get("frame_timing", "display"), step));
     } else if (key == "hud_layout") {
         draft_.set("hud_layout",
                    cycle({{"edges", ""}, {"center", ""}}, draft_.get("hud_layout", "edges"), step));

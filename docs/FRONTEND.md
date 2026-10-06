@@ -30,7 +30,7 @@ in-game panel off.
 
 | Tab | Rows | Applies in game |
 |---|---|---|
-| General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), About (credits; opens the read-me) | rumble live; frame rate next start |
+| General | Rumble strength (slider, 0 = off), Frame rate (Auto/120/60), Frame timing (Match display / Exact 59.94 Hz; docs/PACING.md), About (credits; opens the read-me) | rumble live; frame rate next start |
 | Controls | RecompFrontend's layout, below | bindings: at once |
 | Graphics | Resolution 1–8×, Aspect ratio (Original / Expanded, as in the N64 recomps; Expanded only with `PortInfo::widescreen`), Window mode, HUD layout (Original = 4:3 centred / Expanded = anchored to the edges; never stretched; with `PortInfo::hud`) | aspect, window mode, HUD live; resolution next start |
 
@@ -91,7 +91,7 @@ containers) in regions: launcher list; panel tab bar, rows, footer; dialog butto
 
 ## Settings keys
 
-`disc`, `scale`, `aspect` (`original`/`expanded`), `fullscreen`, `fps`, `rumble`, `volume`, `clip`, `hud_fix`,
+`disc`, `scale`, `aspect` (`original`/`expanded`), `fullscreen`, `fps`, `frame_timing` (`display`/`exact`), `rumble`, `volume`, `clip`, `hud_fix`,
 `hud_layout`, `texture_pack`, `dump_textures`, `mods` (ARCHITECTURE.md § Settings).
 
 ## How it is built

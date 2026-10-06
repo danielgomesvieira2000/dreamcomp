@@ -265,7 +265,7 @@ public:
             if (eq != std::string::npos &&
                 (key == "texture_pack" || key == "dump_textures" || key == "aspect" ||
                  key == "fullscreen" || key == "scale" || key == "rumble" || key == "mods" || key == "volume" || key == "clip" ||
-                 key == "fps"))
+                 key == "fps" || key == "frame_timing"))
                 g_settings.set(key, kv.substr(eq + 1));
         }
         // The aspect flags decide the render target's shape, which the engine needs before it
@@ -299,6 +299,11 @@ public:
             else if (fps == "120")
                 args.push_back("--interpolate");
         }
+        // Frame timing (docs/PACING.md): "display" (default) paces the game at the display's
+        // rate when it is within 0.5 % of the game's, so a 60 Hz panel never repeats a frame;
+        // "exact" keeps the Dreamcast's 59.94 Hz.
+        if (g_settings.get("frame_timing", "display") != "exact" && !has_flag(args, "--sync-display"))
+            args.push_back("--sync-display");
 
         // For the in-game menu (wants_overlay()).
         config_path_ = flag_value(args, "--config");

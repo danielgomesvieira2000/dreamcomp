@@ -32,8 +32,7 @@ Findings:
 
 - **Pacing is even.** Every frame but one per ~17-20 s is shown exactly once. The exception is the
   refresh mismatch: the Dreamcast runs at 59.94 Hz, the panel at 60 Hz, so every 16.7 s the panel
-  has no new frame and shows one twice. Fixing that means running the game at the display's rate
-  (+0.1 %), a choice against "never change the logic rate"; not done.
+  has no new frame and shows one twice. Fixed by display sync (below).
 - **Performance has headroom** at every scale on Iris Xe: GPU at most 9 ms of 16.7.
 - **Latency is the weak point**: 48 ms frame start to photons. Intel's Vulkan driver presents
   windowed *and* borderless-fullscreen swapchains as "Composed: Copy with GPU GDI" (a copy, then
@@ -41,12 +40,37 @@ Findings:
   IMMEDIATE (mailbox falls back to FIFO), and `VK_EXT_full_screen_exclusive`.
 - OBS's implicit Vulkan layer (`VK_LAYER_OBS_HOOK`) is installed on this machine; disabling it
   changes nothing measurable.
+- **The game is slower per frame at real speed than flat out**: host time per guest frame p50
+  9-11 ms, p99 ~16 ms at real speed, against ~4.4 ms average unthrottled (`DREAM_PROFILE=1`:
+  guest code, audio and render submission all 2-2.6x slower). A busy-wait instead of the pacing
+  sleep brings it to p50 4.75 / p99 9.2 ms, so it is the CPU clocking down while the thread sleeps
+  (i5-1335U, Balanced plan), not GPU waits. Opting out of power throttling and MMCSS "Games" made
+  no difference. Not fixed: spinning a core costs a laptop power and heat, and with today's
+  presentation the frame time still fits (all frames shown once).
+
+## Display sync (setting `frame_timing`, default `display`; D-008)
+
+The pacing clock runs at the display's rate when that is within 0.5 % of the game's (DWM's
+measured period: 60.003 Hz here, so x1.00087), aimed 0.01 % under it so the swapchain queue stays
+drained. Result over 60 s (PresentMon): **0 repeated frames** (2 without), frame time sd 0.59 ms
+(0.67), latency 48.0 ms and GPU busy 8.2 ms unchanged. On a 120/144 Hz display, with
+interpolation, or off Windows (no vblank grid yet) the guest clock paces as before.
+
+Tried and dropped (2026-10-06):
+
+| Attempt | Result |
+|---|---|
+| Phase lock: present a margin (1-12 ms) before each vblank, emulation scheduled just in time | 40-75 repeated frames per 30 s (emulation time varies 4-16 ms and there is no queue slack left); with a final 2-4 ms busy-wait 3-5 per 30 s; display latency 48.0 ms at every margin: on this copy path the moment of presentation inside a refresh does not change latency |
+| `VK_EXT_full_screen_exclusive` | `ALLOWED`: still the GDI copy; `APPLICATION_CONTROLLED`: acquire fails (-3) and the swapchain is rebuilt every frame |
+| Power-throttling opt-out, MMCSS "Games" for the game thread | no change in host time per frame |
+| DXGI flip model (standalone D3D11 probe, not the game) | "Hardware Composed: Independent Flip", windowed and fullscreen, display latency 31.9 ms against the game's 48: about one refresh less. A Vulkan -> DXGI present path is the candidate next step |
 
 ## Changes
 
 | Date | Change | Result |
 |---|---|---|
 | 2026-10-06 | Pacing sleep fixed (dangling `paused_for`; engine-changes.md) | runs without vsync held to 1.0x |
+| 2026-10-06 | Display sync, setting `frame_timing` (above) | 0 repeated frames in 60 s (was 2) |
 | 2026-10-06 | Pads read after the pacing sleep, one window poll per frame (engine-changes.md) | input age at present: mean 9.5 ms, p50 8.7 (was one full frame, ~16.7 ms, by construction); scripted fight pixel-identical at frame 2500; Escape still opens the menu |
 
 ## Known issue

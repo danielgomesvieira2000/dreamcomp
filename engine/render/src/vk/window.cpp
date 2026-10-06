@@ -8,6 +8,16 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 namespace dream::render::vk {
 
@@ -584,6 +594,44 @@ float Window::refresh_rate() const noexcept {
     const SDL_DisplayID id = SDL_GetDisplayForWindow(window_);
     const SDL_DisplayMode* mode = id ? SDL_GetCurrentDisplayMode(id) : nullptr;
     return mode ? mode->refresh_rate : 0.0f;
+}
+
+bool Window::vblank_grid(std::chrono::steady_clock::time_point& vblank,
+                         std::chrono::nanoseconds& period) const noexcept {
+#ifdef _WIN32
+    // DwmGetCompositionTimingInfo, loaded at run time so nothing links against dwmapi.
+    using Fn = HRESULT(WINAPI*)(HWND, DWM_TIMING_INFO*);
+    static const Fn get = [] {
+        HMODULE m = LoadLibraryW(L"dwmapi.dll");
+        return m ? reinterpret_cast<Fn>(GetProcAddress(m, "DwmGetCompositionTimingInfo")) : nullptr;
+    }();
+    static const long long freq = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f.QuadPart;
+    }();
+    if (!get)
+        return false;
+    DWM_TIMING_INFO ti{};
+    ti.cbSize = sizeof(ti);
+    if (FAILED(get(nullptr, &ti)) || ti.qpcRefreshPeriod == 0 || ti.qpcVBlank == 0)
+        return false;
+    // MSVC's steady_clock is the performance counter in nanoseconds, so QPC values convert
+    // directly (same epoch).
+    auto to_ns = [](long long qpc) {
+        return std::chrono::nanoseconds(static_cast<long long>(
+            static_cast<double>(qpc) * 1e9 / static_cast<double>(freq)));
+    };
+    vblank = std::chrono::steady_clock::time_point(
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            to_ns(static_cast<long long>(ti.qpcVBlank))));
+    period = to_ns(static_cast<long long>(ti.qpcRefreshPeriod));
+    return true;
+#else
+    (void)vblank;
+    (void)period;
+    return false;
+#endif
 }
 
 void Window::set_fullscreen(bool on) noexcept {
