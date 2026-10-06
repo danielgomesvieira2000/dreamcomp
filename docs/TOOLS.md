@@ -13,6 +13,7 @@
 | `tools/scenario.py <boot\|menus\|fight\|fight-long> [--set k=v] [--env K=V] [--out DIR]` | Repeatable scripted run with scratch settings/VMU/bindings and a fixed RTC seed: `run.log`, `audio.wav` + `audio.txt`, `shot_*.png`, `sheet.png`, `summary.json` | `--compare DIR DIR...` puts summaries side by side (speed, clicks, clipping, drops, textures); with two folders it also diffs the screenshots taken at the same frames (% pixels changed, `diff_<frame>.png` with changes in red) |
 | `tools/audio_check.py run.wav [--per-second]` | Clipping and clicks (isolated second-difference spikes) per channel, with timestamps | locate a click, then `DREAM_AICA_PROBE` it |
 | `tools/crash_lookup.py <port> 0xOFFSET...` | Names the function of a crash report's `module + 0xOFFSET` from the linker map (`/MAP`, beside the executable) | crash reports go to stderr; minidumps to `%APPDATA%/dream-recomp/dream-recomp/crash-*.dmp` |
+| `.venv/Scripts/python tools/crash_stack.py [DUMP]` | The crashing thread's stack from a minidump, scanned for return addresses in the game and named from the map (needs `pip install minidump`) | heuristic: the top entries are the reliable ones |
 | `tools/audit.py all [--repo DIR]` | No game data, engine ledger complete, docs/skills consistent | pre-commit hook: `install-hook` |
 | `tools/build_linux.sh <port> [--headless]` | Linux build (native or WSL) into `<port>/build-linux` | window build needs `libsdl3-dev`, `glslc` |
 

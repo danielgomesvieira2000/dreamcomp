@@ -51,6 +51,11 @@ public:
     void set_memory(const std::uint8_t* vram, std::size_t vram_size,
                     const std::uint32_t* palette_ram, PaletteFormat palette_format);
     TextureCache& textures() noexcept { return textures_; }
+    // The render pass new pipelines are built against (dreamcomp). Pipelines already made stay
+    // valid for any compatible pass, but the handle passed to create() must not outlive its
+    // pass: when the target is rebuilt, hand the renderer the new one, or the next pipeline is
+    // created against a destroyed pass (a crash inside the driver).
+    void set_render_pass(VkRenderPass pass) noexcept { render_pass_ = pass; }
     // Persistent pipelines (dreamcomp): loads a Vulkan pipeline cache and the list of pipeline
     // variants earlier runs used from `path`, and creates those variants now, so none is compiled
     // mid-game (a 10-30 ms hitch each on some drivers). destroy() writes both back. Call after

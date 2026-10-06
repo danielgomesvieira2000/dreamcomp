@@ -238,6 +238,8 @@ struct Live {
         if (!offscreen.create(window.context(), w, h))
             std::fprintf(stderr, "window: cannot rebuild the render target: %s\n",
                          offscreen.error().c_str());
+        // The old pass is gone: pipelines made from now on use the new (compatible) one.
+        renderer.set_render_pass(offscreen.render_pass());
         if (interpolate) {
             interp_off.destroy();
             interp_off.create(window.context(), w, h);
