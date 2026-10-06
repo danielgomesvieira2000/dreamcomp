@@ -26,6 +26,9 @@ struct FrameGeometry {
     float width = 640, height = 480;
     // The punch-through threshold, from the hardware's PT_ALPHA_REF register (PVR + 0x11C).
     float alpha_ref = 1.0f / 255.0f;
+    // How much of a shadowed surface's light is left inside a modifier volume: FPU_SHAD_SCALE
+    // (PVR + 0x074) bits 0-7 over 256 (dreamcomp).
+    float shadow_scale = 0.5f;
 };
 
 class Renderer {
@@ -63,7 +66,7 @@ public:
     const std::string& error() const noexcept { return error_; }
     // Diagnostics from the last draw.
     std::uint32_t drawn_polygons = 0, drawn_vertices = 0, pipelines = 0, textured_polygons = 0,
-                  blended_polygons = 0, punch_through_polygons = 0;
+                  blended_polygons = 0, punch_through_polygons = 0, modifier_triangles = 0;
 
 private:
     // The pipeline state a polygon can vary. Packed so it can key the cache.
@@ -74,10 +77,11 @@ private:
         std::uint32_t src_blend : 3;  // TSP SrcInstr
         std::uint32_t dst_blend : 3;  // TSP DstInstr
         std::uint32_t blend : 1;      // blending on at all (the translucent list)
-        std::uint32_t padding : 19;
+        std::uint32_t shadow : 1;     // PCW Shadow: modifier volumes darken it (opaque lists)
+        std::uint32_t padding : 18;
         std::uint32_t bits() const noexcept {
             return depth_mode | (depth_write << 3) | (cull_mode << 4) | (src_blend << 6) |
-                   (dst_blend << 9) | (blend << 12);
+                   (dst_blend << 9) | (blend << 12) | (shadow << 13);
         }
         bool operator==(const PipelineKey& o) const noexcept { return bits() == o.bits(); }
     };
@@ -86,6 +90,21 @@ private:
     };
 
     VkPipeline pipeline_for(const PipelineKey& key);
+    // Modifier volumes (dreamcomp), as Flycast's Vulkan renderer draws them: per volume, the
+    // triangles XOR (closed) or OR (open) a stencil bit where they pass the depth test; the last
+    // triangle's instruction folds it into "inside" (inclusion) or "outside" (exclusion); then
+    // one quad darkens every pixel that is inside and belongs to a shadow-receiving polygon.
+    enum class ModVol : std::uint32_t { Xor, Or, Inclusion, Exclusion, Final };
+    VkPipeline modvol_pipeline(ModVol mode, std::uint32_t cull);
+    void draw_modifier_volumes(VkCommandBuffer cmd, const Frame& frame,
+                               const FrameGeometry& geometry, VkBuffer geometry_buffer);
+    std::unordered_map<std::uint32_t, VkPipeline> modvol_pipelines_;
+    VkShaderModule mv_vs_ = VK_NULL_HANDLE, mv_fs_ = VK_NULL_HANDLE;
+    bool stencil_ = false;
+    static constexpr unsigned kModvolRing = 4;
+    HostBuffer modvol_ring_[kModvolRing];
+    unsigned modvol_next_ = 0;
+    std::vector<float> modvol_staging_;
     void save_pipeline_cache();
     VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
     std::string pipeline_cache_path_;

@@ -27,7 +27,9 @@ bool Offscreen::create(Context& ctx, std::uint32_t width, std::uint32_t height) 
     }
     const VkFormat depth_format = pick_depth_format(ctx.physical_device());
     if (!depth_.create(ctx, depth_format, extent_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                       VK_IMAGE_ASPECT_DEPTH_BIT)) {
+                       format_has_stencil(depth_format)
+                           ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                           : VK_IMAGE_ASPECT_DEPTH_BIT)) {
         error_ = "could not create the offscreen depth attachment";
         return false;
     }
@@ -45,7 +47,7 @@ bool Offscreen::create(Context& ctx, std::uint32_t width, std::uint32_t height) 
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;  // modifier volumes start clear
     attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;

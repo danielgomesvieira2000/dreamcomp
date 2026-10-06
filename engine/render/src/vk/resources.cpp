@@ -162,8 +162,10 @@ void AttachmentImage::destroy() {
 VkFormat pick_depth_format(VkPhysicalDevice physical) {
     // 32-bit float depth first: the PowerVR's depth is 1/w over a wide range, and the fragment
     // shader writes a logarithm of it, so precision matters more than memory here.
-    for (VkFormat f : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT,
-                       VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM}) {
+    // With a stencil when there is one (dreamcomp): modifier volumes (shadows) mark the
+    // stencil buffer. A 32-bit depth with stencil first, as before for the depth itself.
+    for (VkFormat f : {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT,
+                       VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM}) {
         VkFormatProperties props{};
         vkGetPhysicalDeviceFormatProperties(physical, f, &props);
         if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)

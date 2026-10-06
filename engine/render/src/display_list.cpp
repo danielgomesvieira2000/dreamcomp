@@ -267,6 +267,7 @@ void DisplayList::handle_header(const std::uint32_t w[8]) {
         list_ == static_cast<unsigned>(ListType::TranslucentModifier)) {
         // A modifier volume header only sets the ISP word; its vertices follow.
         header_active_ = true;
+        ++modifier_headers_;
         return;
     }
 
@@ -429,6 +430,7 @@ void DisplayList::handle_sprite_vertex(const std::uint32_t a[8], const std::uint
 void DisplayList::handle_modifier_vertex(const std::uint32_t a[8], const std::uint32_t b[8]) {
     ModifierTriangle t;
     t.isp = current_.isp;
+    t.header = modifier_headers_;
     t.x[0] = as_float(a[1]);
     t.y[0] = as_float(a[2]);
     t.z[0] = as_float(a[3]);

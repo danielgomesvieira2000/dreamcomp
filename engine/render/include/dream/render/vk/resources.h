@@ -87,5 +87,9 @@ private:
 
 // The first of these formats the device supports as a depth attachment.
 VkFormat pick_depth_format(VkPhysicalDevice physical);
+inline bool format_has_stencil(VkFormat f) {
+    return f == VK_FORMAT_D32_SFLOAT_S8_UINT || f == VK_FORMAT_D24_UNORM_S8_UINT ||
+           f == VK_FORMAT_D16_UNORM_S8_UINT;
+}
 
 }  // namespace dream::render::vk

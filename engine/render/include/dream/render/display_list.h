@@ -60,6 +60,8 @@ struct Polygon {
 struct ModifierTriangle {
     float x[3] = {}, y[3] = {}, z[3] = {};
     std::uint32_t isp = 0;
+    std::uint32_t header = 0;  // which modifier-volume header it follows (dreamcomp): the unit the
+                               // hardware's volume instructions apply to
 };
 
 // Everything one render needs.
@@ -124,6 +126,7 @@ private:
     // A polygon header stays in force until another header or the end of the list: one header can
     // be followed by several strips, each closed by an end-of-strip flag.
     bool header_active_ = false;
+    std::uint32_t modifier_headers_ = 0;
     Pending pending_ = Pending::None;
     std::uint32_t held_[8]{};  // first half of a 64-byte parameter
 

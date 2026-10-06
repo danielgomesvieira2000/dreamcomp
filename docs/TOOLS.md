@@ -29,6 +29,7 @@ Engine-level instruments (flags of the port executable, `--help`): `--suggest-co
 | `DREAM_AUDIO_TRACE=1` | Log every audio block the sink drops, with the queue level |
 | `DREAM_TEX_SLOW=MS` | Name every texture whose decode took longer than MS |
 | `DREAM_NO_PIPELINE_CACHE=1` | Start without the persistent pipeline cache (to measure) |
+| `DREAM_NO_MODVOL=1` | Do not draw modifier volumes (shadows), to compare |
 | `DREAM_PROFILE=1` | Host time per scheduler event and rendering after the report |
 | `DREAM_SINGLE_THREAD=1` | Guest and window events on one thread (upstream behaviour) |
 

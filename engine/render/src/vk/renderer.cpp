@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -13,6 +14,8 @@
 
 #include "geometry_frag.h"
 #include "geometry_vert.h"
+#include "modvol_frag.h"
+#include "modvol_vert.h"
 
 namespace dream::render::vk {
 
@@ -108,6 +111,9 @@ constexpr std::uint32_t pcw_texture(std::uint32_t p) {
 constexpr std::uint32_t pcw_offset(std::uint32_t p) {
     return (p >> 2) & 1u;
 }
+constexpr std::uint32_t pcw_shadow(std::uint32_t p) {
+    return (p >> 7) & 1u;
+}
 // The hardware's eight blend factors. Index 2 and 3 mean "the other colour", which is the
 // destination colour for a source factor and the source colour for a destination factor; the rest
 // are the same on both sides.
@@ -163,6 +169,10 @@ bool Renderer::create(Context& ctx, VkRenderPass render_pass) {
     render_pass_ = render_pass;
     vs_ = make_module(ctx.device(), geometry_vert, sizeof geometry_vert);
     fs_ = make_module(ctx.device(), geometry_frag, sizeof geometry_frag);
+    mv_vs_ = make_module(ctx.device(), modvol_vert, sizeof modvol_vert);
+    mv_fs_ = make_module(ctx.device(), modvol_frag, sizeof modvol_frag);
+    // The offscreen target picks the same depth format; with a stencil, modifier volumes draw.
+    stencil_ = format_has_stencil(pick_depth_format(ctx.physical_device())) && mv_vs_ && mv_fs_;
     if (!vs_ || !fs_) {
         error_ = "failed to create the geometry shader modules";
         return false;
@@ -259,6 +269,21 @@ VkPipeline Renderer::pipeline_for(const PipelineKey& key) {
     ds.depthTestEnable = VK_TRUE;
     ds.depthWriteEnable = key.depth_write ? VK_TRUE : VK_FALSE;
     ds.depthCompareOp = depth_compare(key.depth_mode);
+    if (stencil_ && !key.blend) {
+        // Opaque and punch-through polygons record whether modifier volumes may shade them:
+        // stencil bit 7 = the PCW Shadow bit of the nearest surface (Flycast pipeline.cpp).
+        ds.stencilTestEnable = VK_TRUE;
+        VkStencilOpState so{};
+        so.failOp = VK_STENCIL_OP_KEEP;
+        so.passOp = VK_STENCIL_OP_REPLACE;
+        so.depthFailOp = VK_STENCIL_OP_KEEP;
+        so.compareOp = VK_COMPARE_OP_ALWAYS;
+        so.compareMask = 0;
+        so.writeMask = 0x80;
+        so.reference = key.shadow ? 0x80u : 0u;
+        ds.front = so;
+        ds.back = so;
+    }
 
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -424,7 +449,16 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
                      [](const Item& a, const Item& b) { return a.depth < b.depth; });
 
     VkPipeline bound = VK_NULL_HANDLE;
-    for (const Item& item : items) {
+    modifier_triangles = 0;
+    bool volumes_drawn = false;
+    for (std::size_t index = 0; index < items.size(); ++index) {
+        const Item& item = items[index];
+        if (!volumes_drawn && index == translucent_start) {
+            // After the opaque and punch-through lists, before the translucent one (Flycast).
+            draw_modifier_volumes(cmd, frame, geometry, buffer);
+            volumes_drawn = true;
+            bound = VK_NULL_HANDLE;
+        }
         const Polygon& p = *item.poly;
         PipelineKey key{};
         key.depth_mode = isp_depth_mode(p.isp) & 7u;
@@ -435,6 +469,7 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         key.blend = item.blended ? 1u : 0u;
         key.src_blend = tsp_src_instr(p.tsp) & 7u;
         key.dst_blend = tsp_dst_instr(p.tsp) & 7u;
+        key.shadow = (stencil_ && !item.blended) ? pcw_shadow(p.pcw) : 0u;
         key.padding = 0;
         VkPipeline pipeline = pipeline_for(key);
         if (!pipeline)
@@ -480,6 +515,209 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         ++drawn_polygons;
         drawn_vertices += p.count;
     }
+    if (!volumes_drawn)
+        draw_modifier_volumes(cmd, frame, geometry, buffer);
+}
+
+VkPipeline Renderer::modvol_pipeline(ModVol mode, std::uint32_t cull) {
+    const std::uint32_t key = static_cast<std::uint32_t>(mode) * 4u + (cull & 3u);
+    if (auto it = modvol_pipelines_.find(key); it != modvol_pipelines_.end())
+        return it->second;
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = mv_vs_;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = mv_fs_;
+    stages[1].pName = "main";
+    VkVertexInputBindingDescription binding{0, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription attribute{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    VkPipelineVertexInputStateCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &binding;
+    vi.vertexAttributeDescriptionCount = 1;
+    vi.pVertexAttributeDescriptions = &attribute;
+    VkPipelineInputAssemblyStateCreateInfo ia{};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vp{};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo rs{};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = cull_flags(cull);
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    // Stencil states copied from Flycast's Vulkan renderer (pipeline.cpp CreateModVolPipeline):
+    // (fail, pass, depth fail, compare, compare mask, write mask, reference).
+    auto op = [](VkStencilOp fail, VkStencilOp pass, VkStencilOp dfail, VkCompareOp cmp,
+                 std::uint32_t cmask, std::uint32_t wmask, std::uint32_t ref) {
+        VkStencilOpState s{};
+        s.failOp = fail;
+        s.passOp = pass;
+        s.depthFailOp = dfail;
+        s.compareOp = cmp;
+        s.compareMask = cmask;
+        s.writeMask = wmask;
+        s.reference = ref;
+        return s;
+    };
+    VkStencilOpState so{};
+    switch (mode) {
+        case ModVol::Xor:
+            so = op(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INVERT, VK_STENCIL_OP_KEEP,
+                    VK_COMPARE_OP_ALWAYS, 0, 2, 2);
+            break;
+        case ModVol::Or:
+            so = op(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP,
+                    VK_COMPARE_OP_ALWAYS, 2, 2, 2);
+            break;
+        case ModVol::Inclusion:
+            so = op(VK_STENCIL_OP_ZERO, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_ZERO,
+                    VK_COMPARE_OP_LESS_OR_EQUAL, 3, 3, 1);
+            break;
+        case ModVol::Exclusion:
+            so = op(VK_STENCIL_OP_ZERO, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO,
+                    VK_COMPARE_OP_EQUAL, 3, 3, 1);
+            break;
+        case ModVol::Final:
+            so = op(VK_STENCIL_OP_ZERO, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_ZERO,
+                    VK_COMPARE_OP_EQUAL, 0x81, 3, 0x81);
+            break;
+    }
+    VkPipelineDepthStencilStateCreateInfo ds{};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = (mode == ModVol::Xor || mode == ModVol::Or) ? VK_TRUE : VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    ds.depthCompareOp = VK_COMPARE_OP_GREATER;  // nearer is larger, as for the geometry
+    ds.stencilTestEnable = VK_TRUE;
+    ds.front = so;
+    ds.back = so;
+    VkPipelineColorBlendAttachmentState blend{};
+    if (mode == ModVol::Final) {
+        blend.blendEnable = VK_TRUE;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.colorBlendOp = VK_BLEND_OP_ADD;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend.alphaBlendOp = VK_BLEND_OP_ADD;
+        blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    }
+    VkPipelineColorBlendStateCreateInfo cb{};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &blend;
+    const VkDynamicState dynamics[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dy{};
+    dy.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dy.dynamicStateCount = 2;
+    dy.pDynamicStates = dynamics;
+    VkGraphicsPipelineCreateInfo gpci{};
+    gpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gpci.stageCount = 2;
+    gpci.pStages = stages;
+    gpci.pVertexInputState = &vi;
+    gpci.pInputAssemblyState = &ia;
+    gpci.pViewportState = &vp;
+    gpci.pRasterizationState = &rs;
+    gpci.pMultisampleState = &ms;
+    gpci.pDepthStencilState = &ds;
+    gpci.pColorBlendState = &cb;
+    gpci.pDynamicState = &dy;
+    gpci.layout = layout_;
+    gpci.renderPass = render_pass_;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(ctx_->device(), pipeline_cache_, 1, &gpci, nullptr, &pipeline) !=
+        VK_SUCCESS) {
+        error_ = "vkCreateGraphicsPipelines failed (modifier volume)";
+        return VK_NULL_HANDLE;
+    }
+    modvol_pipelines_.emplace(key, pipeline);
+    return pipeline;
+}
+
+void Renderer::draw_modifier_volumes(VkCommandBuffer cmd, const Frame& frame,
+                                     const FrameGeometry& geometry, VkBuffer geometry_buffer) {
+    if (!stencil_ || frame.modifiers.empty() || std::getenv("DREAM_NO_MODVOL"))
+        return;
+    // Triangles, then the final quad as two more, all in one buffer: x, y in pixels, z = 1/w.
+    const std::size_t tris = frame.modifiers.size();
+    modvol_staging_.resize((tris + 2) * 9);
+    float* out = modvol_staging_.data();
+    for (const ModifierTriangle& t : frame.modifiers)
+        for (unsigned i = 0; i < 3; ++i) {
+            *out++ = t.x[i];
+            *out++ = t.y[i];
+            *out++ = t.z[i];
+        }
+    const float l = geometry.left, t = geometry.top;
+    const float r = geometry.left + geometry.width, b = geometry.top + geometry.height;
+    const float quad[18] = {l, t, 1, r, t, 1, l, b, 1, r, t, 1, r, b, 1, l, b, 1};
+    std::copy(std::begin(quad), std::end(quad), out);
+    HostBuffer& buf = modvol_ring_[modvol_next_];
+    modvol_next_ = (modvol_next_ + 1) % kModvolRing;
+    const VkDeviceSize bytes = modvol_staging_.size() * sizeof(float);
+    if (!buf.ensure(*ctx_, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
+        return;
+    buf.write(modvol_staging_.data(), static_cast<std::size_t>(bytes));
+    const VkDeviceSize zero = 0;
+    VkBuffer vb = buf.handle();
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
+
+    PushConstants push{};
+    push.scale[0] = 2.0f / geometry.width;
+    push.scale[1] = 2.0f / geometry.height;
+    push.offset[0] = -1.0f - 2.0f * geometry.left / geometry.width;
+    push.offset[1] = -1.0f - 2.0f * geometry.top / geometry.height;
+    push.alpha_ref = 1.0f - geometry.shadow_scale;
+    vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof push, &push);
+
+    // One "parameter" per modifier header, as in Flycast's DrawModVols.
+    std::size_t base = SIZE_MAX;  // first triangle of the volume being summed
+    VkPipeline bound = VK_NULL_HANDLE;
+    auto bind = [&](VkPipeline p) {
+        if (p && p != bound) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+            bound = p;
+        }
+        return p != VK_NULL_HANDLE;
+    };
+    for (std::size_t first = 0; first < tris;) {
+        std::size_t end = first + 1;
+        while (end < tris && frame.modifiers[end].header == frame.modifiers[first].header)
+            ++end;
+        const std::uint32_t isp = frame.modifiers[first].isp;
+        const std::uint32_t mv_mode = isp >> 29;            // volume instruction
+        const bool volume_last = ((isp >> 26) & 1u) != 0;  // ISP VolumeLast
+        const std::uint32_t cull = (isp >> 27) & 3u;
+        if (base == SIZE_MAX)
+            base = first;
+        if (bind(modvol_pipeline(!volume_last && mv_mode > 0 ? ModVol::Or : ModVol::Xor, cull)))
+            vkCmdDraw(cmd, static_cast<std::uint32_t>((end - first) * 3), 1,
+                      static_cast<std::uint32_t>(first * 3), 0);
+        if (mv_mode == 1 || mv_mode == 2) {
+            if (bind(modvol_pipeline(mv_mode == 1 ? ModVol::Inclusion : ModVol::Exclusion, cull)))
+                vkCmdDraw(cmd, static_cast<std::uint32_t>((end - base) * 3), 1,
+                          static_cast<std::uint32_t>(base * 3), 0);
+            base = SIZE_MAX;
+        }
+        first = end;
+    }
+    if (bind(modvol_pipeline(ModVol::Final, 0)))
+        vkCmdDraw(cmd, 6, 1, static_cast<std::uint32_t>(tris * 3), 0);
+    modifier_triangles = static_cast<std::uint32_t>(tris);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &geometry_buffer, &zero);
 }
 
 namespace {
@@ -578,6 +816,18 @@ void Renderer::destroy() {
     }
     for (auto& [key, pipeline] : pipelines_) vkDestroyPipeline(ctx_->device(), pipeline, nullptr);
     pipelines_.clear();
+    for (auto& [key, pipeline] : modvol_pipelines_)
+        vkDestroyPipeline(ctx_->device(), pipeline, nullptr);
+    modvol_pipelines_.clear();
+    for (auto& b : modvol_ring_) b.destroy();
+    if (mv_vs_) {
+        vkDestroyShaderModule(ctx_->device(), mv_vs_, nullptr);
+        mv_vs_ = VK_NULL_HANDLE;
+    }
+    if (mv_fs_) {
+        vkDestroyShaderModule(ctx_->device(), mv_fs_, nullptr);
+        mv_fs_ = VK_NULL_HANDLE;
+    }
     textures_.destroy();
     if (set_layout_) {
         vkDestroyDescriptorSetLayout(ctx_->device(), set_layout_, nullptr);

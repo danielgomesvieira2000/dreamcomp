@@ -54,7 +54,8 @@ endif()
 set(_spv_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${_spv_dir})
 set(_spv_headers)
-foreach(_shader triangle.vert triangle.frag geometry.vert geometry.frag present.vert present.frag)
+foreach(_shader triangle.vert triangle.frag geometry.vert geometry.frag present.vert present.frag
+                modvol.vert modvol.frag)
   string(REPLACE "." "_" _sym ${_shader})
   set(_out ${_spv_dir}/${_sym}.h)
   # glslc -mfmt=c emits a bare initialiser list; wrap it in a declaration so the header can just

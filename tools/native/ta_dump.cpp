@@ -32,8 +32,8 @@ int main(int argc, char** argv) {
     dream::render::DisplayList d;
     d.feed_stream(words.data(), words.size());
     const auto& f = d.frame();
-    std::printf("vertices %zu strips %u sprites %u z [%g, %g]\n", f.vertices.size(), f.strips,
-                f.sprites, f.min_z, f.max_z);
+    std::printf("vertices %zu strips %u sprites %u modifier triangles %zu z [%g, %g]\n",
+                f.vertices.size(), f.strips, f.sprites, f.modifiers.size(), f.min_z, f.max_z);
     for (std::size_t l = 0; l < f.lists.size(); ++l) {
         if (only_list >= 0 && static_cast<int>(l) != only_list)
             continue;
