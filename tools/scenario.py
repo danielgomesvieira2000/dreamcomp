@@ -46,6 +46,8 @@ SCENARIOS = {
               "title, main menu, mode select, character select"),
     "fight": (4900, fight_press(), "1500,2500,3500,4500", "arcade: Kilik vs Voldo, stage 1"),
     "fight-long": (12000, fight_press(), "2500,4500,6500,8500,10500,11800", "several arcade fights"),
+    "attract": (9000, "start@600", "900,1500,2100,2700,3300,3900,4500,5100,5700,6300,6900,7500,8100,8700",
+                "no input: title, intro and the demo loop"),
 }
 
 
