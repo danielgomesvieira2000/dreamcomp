@@ -166,6 +166,35 @@ def compare(dirs):
     print("key".ljust(18) + "".join(os.path.basename(d.rstrip("/\\"))[:22].ljust(24) for d in dirs))
     for k in keys:
         print(k.ljust(18) + "".join(str(r.get(k, "-")).ljust(24) for r in rows))
+    # Screenshots both runs took at the same frame: how much changed, and where (diff_*.png in
+    # the second folder; changed pixels bright on a dimmed copy of the first run's frame).
+    if len(dirs) == 2:
+        try:
+            from PIL import Image, ImageChops
+        except ImportError:
+            return 0
+        a_dir, b_dir = dirs
+        shots = sorted(f for f in os.listdir(a_dir) if f.startswith("shot_") and f.endswith(".png"))
+        for f in shots:
+            pb = os.path.join(b_dir, f)
+            if not os.path.exists(pb):
+                continue
+            ia = Image.open(os.path.join(a_dir, f)).convert("RGB")
+            ib = Image.open(pb).convert("RGB")
+            if ia.size != ib.size:
+                print(f"{f}: sizes differ {ia.size} vs {ib.size}")
+                continue
+            diff = ImageChops.difference(ia, ib).convert("L")
+            hist = diff.histogram()
+            total = ia.size[0] * ia.size[1]
+            changed = total - sum(hist[:9])  # more than 8 levels apart
+            mean = sum(i * n for i, n in enumerate(hist)) / total
+            print(f"{f}: {100.0 * changed / total:.2f} % of pixels changed, mean difference {mean:.2f}")
+            if changed:
+                mask = diff.point(lambda v: 255 if v > 8 else 0)
+                out = Image.blend(ia, Image.new("RGB", ia.size), 0.6)
+                out.paste(Image.new("RGB", ia.size, (255, 40, 40)), mask=mask)
+                out.save(os.path.join(b_dir, "diff_" + f[5:]))
     return 0
 
 
