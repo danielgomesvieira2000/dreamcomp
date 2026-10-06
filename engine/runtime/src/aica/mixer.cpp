@@ -1001,10 +1001,39 @@ void Mixer::dsp_step() {
         dsp_.steps = 0;
         for (int step = 0; step < 128; ++step) {
             const u32* p = dsp->MPRO + step * 4;
-            if (p[0] | p[1] | p[2] | p[3]) {
-                dsp_.stopped = false;
-                dsp_.steps = step + 1;
+            DspState::Op& op = dsp_.ops[step];
+            op = DspState::Op{};
+            if (!(p[0] | p[1] | p[2] | p[3])) {
+                op.flags = kOpNop;
+                continue;
             }
+            dsp_.stopped = false;
+            dsp_.steps = step + 1;
+            op.tra = static_cast<std::uint8_t>((p[0] >> 9) & 0x7F);
+            op.twa = static_cast<std::uint8_t>((p[0] >> 1) & 0x7F);
+            op.ira = static_cast<std::uint8_t>((p[1] >> 7) & 0x3F);
+            op.iwa = static_cast<std::uint8_t>((p[1] >> 1) & 0x1F);
+            op.ysel = static_cast<std::uint8_t>((p[1] >> 13) & 3);
+            op.ewa = static_cast<std::uint8_t>((p[2] >> 8) & 0x0F);
+            op.shift = static_cast<std::uint8_t>((p[2] >> 4) & 3);
+            op.masa = static_cast<std::uint8_t>((p[3] >> 9) & 0x3F);
+            std::uint16_t f = 0;
+            f |= (p[0] & 0x100) ? kOpTwt : 0;
+            f |= (p[1] & 0x8000) ? kOpXsel : 0;
+            f |= (p[1] & 0x40) ? kOpIwt : 0;
+            f |= (p[2] & 0x1000) ? kOpEwt : 0;
+            f |= (p[2] & 0x80) ? kOpAdrl : 0;
+            f |= (p[2] & 0x40) ? kOpFrcl : 0;
+            f |= (p[2] & 8) ? kOpYrl : 0;
+            f |= (p[2] & 4) ? kOpNegb : 0;
+            f |= (p[2] & 2) ? kOpZero : 0;
+            f |= (p[2] & 1) ? kOpBsel : 0;
+            f |= (p[2] & 0x4000) ? kOpMwt : 0;
+            f |= (p[2] & 0x2000) ? kOpMrd : 0;
+            f |= (p[2] & 0x8000) ? kOpTable : 0;
+            f |= (p[3] & 0x100) ? kOpAdreb : 0;
+            f |= (p[3] & 0x80) ? kOpNxadr : 0;
+            op.flags = f;
         }
     }
     if (dsp_.stopped)
@@ -1017,28 +1046,16 @@ void Mixer::dsp_step() {
     // Up to the last real instruction only (dreamcomp): Soulcalibur's programs use 18 or 38 of
     // the 128 steps, and the rest are all-zero steps that change nothing past the loop.
     for (int step = 0; step < st.steps; ++step) {
-        const u32* IPtr = dsp->MPRO + step * 4;
-        if (IPtr[0] == 0 && IPtr[1] == 0 && IPtr[2] == 0 && IPtr[3] == 0) {
+        const DspState::Op& op = st.ops[step];
+        const std::uint16_t f = op.flags;
+        if (f & kOpNop) {
             X = st.TEMP[st.MDEC_CT & 0x7F];
             Y = FRC_REG;
             ACC = static_cast<s32>((static_cast<s64>(X) * Y) >> 12) + X;
             continue;
         }
-        const u32 TRA = (IPtr[0] >> 9) & 0x7F;
-        const bool TWT = IPtr[0] & 0x100;
-        const bool XSEL = IPtr[1] & 0x8000;
-        const u32 YSEL = (IPtr[1] >> 13) & 3;
-        const u32 IRA = (IPtr[1] >> 7) & 0x3F;
-        const bool IWT = IPtr[1] & 0x40;
-        const bool EWT = IPtr[2] & 0x1000;
-        const bool ADRL = IPtr[2] & 0x80;
-        const bool FRCL = IPtr[2] & 0x40;
-        const u32 SHIFT = (IPtr[2] >> 4) & 3;
-        const bool YRL = IPtr[2] & 8;
-        const bool NEGB = IPtr[2] & 4;
-        const bool ZERO = IPtr[2] & 2;
-        const bool BSEL = IPtr[2] & 1;
-        const u32 COEF = static_cast<u32>(step);
+        const u32 IRA = op.ira;
+        const u32 SHIFT = op.shift;
         if (IRA <= 0x1f)
             INPUTS = st.MEMS[IRA];
         else if (IRA <= 0x2F)
@@ -1047,78 +1064,64 @@ void Mixer::dsp_step() {
             INPUTS = static_cast<s32>(dsp->EXTS[IRA - 0x30]) << 8;  // EXTS is 16 bits
         else
             INPUTS = 0;
-        if (IWT) {
-            const u32 IWA = (IPtr[1] >> 1) & 0x1F;
-            st.MEMS[IWA] = MEMVAL[step & 3];
-        }
-        if (!ZERO) {
-            B = BSEL ? ACC : st.TEMP[(TRA + st.MDEC_CT) & 0x7F];
-            if (NEGB)
+        if (f & kOpIwt)
+            st.MEMS[op.iwa] = MEMVAL[step & 3];
+        if (!(f & kOpZero)) {
+            B = (f & kOpBsel) ? ACC : st.TEMP[(op.tra + st.MDEC_CT) & 0x7F];
+            if (f & kOpNegb)
                 B = -B;
         } else {
             B = 0;
         }
-        X = XSEL ? INPUTS : st.TEMP[(TRA + st.MDEC_CT) & 0x7F];
-        if (YSEL == 0)
+        X = (f & kOpXsel) ? INPUTS : st.TEMP[(op.tra + st.MDEC_CT) & 0x7F];
+        if (op.ysel == 0)
             Y = FRC_REG;
-        else if (YSEL == 1)
-            Y = static_cast<s32>(static_cast<s16>(dsp->COEF[COEF])) >> 3;
-        else if (YSEL == 2)
+        else if (op.ysel == 1)
+            Y = static_cast<s32>(static_cast<s16>(dsp->COEF[step])) >> 3;
+        else if (op.ysel == 2)
             Y = Y_REG >> 11;
         else
             Y = (Y_REG >> 4) & 0x0FFF;
-        if (YRL)
+        if (f & kOpYrl)
             Y_REG = INPUTS;
         // One-step delay at the adder output: the shifter sees the previous ACC.
         SHIFTED = (SHIFT == 0 || SHIFT == 3) ? ACC : ACC << 1;
         if (SHIFT < 2)
             SHIFTED = std::min(std::max(SHIFTED, -0x00800000), 0x007FFFFF);
         ACC = static_cast<s32>((static_cast<s64>(X) * Y) >> 12) + B;
-        if (TWT) {
-            const u32 TWA = (IPtr[0] >> 1) & 0x7F;
-            st.TEMP[(TWA + st.MDEC_CT) & 0x7F] = SHIFTED;
-        }
-        if (FRCL)
+        if (f & kOpTwt)
+            st.TEMP[(op.twa + st.MDEC_CT) & 0x7F] = SHIFTED;
+        if (f & kOpFrcl)
             FRC_REG = SHIFT == 3 ? (SHIFTED & 0x0FFF) : (SHIFTED >> 11);
-        if (step & 1) {
-            const bool MWT = IPtr[2] & 0x4000;
-            const bool MRD = IPtr[2] & 0x2000;
-            if (MRD || MWT) {
-                const bool TABLE = IPtr[2] & 0x8000;
-                const u32 MASA = (IPtr[3] >> 9) & 0x3f;
-                const bool ADREB = IPtr[3] & 0x100;
-                const bool NXADR = IPtr[3] & 0x80;
-                u32 ADDR = dsp->MADRS[MASA];
-                if (ADREB)
-                    ADDR += ADRS_REG & 0x0FFF;
-                if (NXADR)
-                    ADDR++;
-                if (!TABLE) {
-                    ADDR += st.MDEC_CT;
-                    ADDR &= st.RBL;
-                } else {
-                    ADDR &= 0xFFFF;
-                }
-                ADDR <<= 1;
-                ADDR += st.RBP;
-                if (MRD) {
-                    u16 w;
-                    std::memcpy(&w, aram_ + (ADDR & kAramMask & ~1u), 2);
-                    MEMVAL[(step + 2) & 3] = dsp_unpack(w);
-                }
-                if (MWT) {
-                    const u16 w = dsp_pack(SHIFTED);
-                    std::memcpy(aram_ + (ADDR & kAramMask & ~1u), &w, 2);
-                }
+        if ((step & 1) && (f & (kOpMrd | kOpMwt))) {
+            u32 ADDR = dsp->MADRS[op.masa];
+            if (f & kOpAdreb)
+                ADDR += ADRS_REG & 0x0FFF;
+            if (f & kOpNxadr)
+                ADDR++;
+            if (!(f & kOpTable)) {
+                ADDR += st.MDEC_CT;
+                ADDR &= st.RBL;
+            } else {
+                ADDR &= 0xFFFF;
+            }
+            ADDR <<= 1;
+            ADDR += st.RBP;
+            if (f & kOpMrd) {
+                u16 w;
+                std::memcpy(&w, aram_ + (ADDR & kAramMask & ~1u), 2);
+                MEMVAL[(step + 2) & 3] = dsp_unpack(w);
+            }
+            if (f & kOpMwt) {
+                const u16 w = dsp_pack(SHIFTED);
+                std::memcpy(aram_ + (ADDR & kAramMask & ~1u), &w, 2);
             }
         }
-        if (ADRL)
+        if (f & kOpAdrl)
             ADRS_REG =
                 SHIFT == 3 ? static_cast<u32>(SHIFTED >> 12) : static_cast<u32>(INPUTS >> 16);
-        if (EWT) {
-            const u32 EWA = (IPtr[2] >> 8) & 0x0F;
-            dsp->EFREG[EWA] = static_cast<u32>(SHIFTED >> 8) & 0xFFFFu;
-        }
+        if (f & kOpEwt)
+            dsp->EFREG[op.ewa] = static_cast<u32>(SHIFTED >> 8) & 0xFFFFu;
     }
     --st.MDEC_CT;
     if (st.MDEC_CT == 0)

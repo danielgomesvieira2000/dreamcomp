@@ -72,6 +72,19 @@ public:
         // Steps up to and including the program's last non-zero instruction (dreamcomp): the
         // all-zero steps after it only set dsp_step's locals, which nothing reads after the loop.
         int steps;
+        // The programme decoded once per change (dreamcomp): dsp_step ran its bit-field
+        // extraction for every step of every sample. Coefficients and MADRS stay live reads.
+        struct Op {
+            std::uint8_t tra, twa, ira, iwa, ewa, masa, ysel, shift;
+            std::uint16_t flags;  // the kOp* bits below
+        } ops[128];
+    };
+    enum : std::uint16_t {
+        kOpNop = 1u << 0,  // all four words zero
+        kOpTwt = 1u << 1, kOpXsel = 1u << 2, kOpIwt = 1u << 3, kOpEwt = 1u << 4,
+        kOpAdrl = 1u << 5, kOpFrcl = 1u << 6, kOpYrl = 1u << 7, kOpNegb = 1u << 8,
+        kOpZero = 1u << 9, kOpBsel = 1u << 10, kOpMwt = 1u << 11, kOpMrd = 1u << 12,
+        kOpTable = 1u << 13, kOpAdreb = 1u << 14, kOpNxadr = 1u << 15,
     };
 
     struct Channel;  // defined in mixer.cpp
