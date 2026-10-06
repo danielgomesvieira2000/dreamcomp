@@ -39,6 +39,27 @@ def fight_press():
     return ",".join(p)
 
 
+def jgr_play_press():
+    # Through the boot notices, the title menu (Start is only taken once the menu is up: pressed
+    # every 100 frames), the story intro and Gum's tutorial dialogue (A every 90 frames), then
+    # skating and jumping on the first street.
+    p = ["start@600", "start@900"] + [f"start@{f}" for f in range(2100, 3100, 100)]
+    p += [f"a@{f}" for f in range(3600, 20000, 90)]
+    return ",".join(p)
+
+
+# Per port id: name -> (frames, press, default shots, what it covers).
+PORT_SCENARIOS = {
+    "jetgrindradio": {
+        "boot": (3000, "start@600,start@900", "300,900,1200,1500,1800,2100,2700",
+                 "VMU notice, SEGA and CRI logos, graffiti notice, loading, title flyby"),
+        "play": (9600, jgr_play_press(), "2500,2900,3500,4000,5500,7000,8500,9500",
+                 "title menu, new game, story intro, Gum's tutorial, skating the first street"),
+        "attract": (6000, "start@600,start@900", "2400,3000,3600,4200,4800,5400",
+                    "no input after the notices: title flyby and the demo loop"),
+    },
+}
+
 SCENARIOS = {
     # name: (frames, press, default shots, what it covers)
     "boot": (900, "", "300,600,880", "boot logos, title screen"),
@@ -51,11 +72,39 @@ SCENARIOS = {
 }
 
 
+def resolve_port(port):
+    """(port dir, port id, exe, recorded disc) for a port id ("jetgrindradio"), slug
+    ("jet-grind-radio", "jet-grind-radio-recomp") or folder."""
+    import glob
+    import json
+    cands = [port] if os.path.isdir(port) else []
+    cands += [os.path.join(ROOT, "ports", f"{port}-recomp"), os.path.join(ROOT, "ports", port)]
+    for d in glob.glob(os.path.join(ROOT, "ports", "*")):
+        if glob.glob(os.path.join(d, "game", f"{port}.toml")):
+            cands.append(d)
+    for d in cands:
+        tomls = [t for t in glob.glob(os.path.join(d, "game", "*.toml")) if not t.endswith("suggested.toml")]
+        if len(tomls) != 1:
+            continue
+        pid = os.path.splitext(os.path.basename(tomls[0]))[0]
+        name = os.path.basename(os.path.normpath(d))
+        exe = os.path.join(d, "build", "game", f"{name}.exe")
+        if not os.path.exists(exe):
+            exe = exe[:-4]
+        disc = None
+        local = os.path.join(d, ".dreamcomp", "local.json")
+        if os.path.exists(local):
+            disc = json.load(open(local, encoding="utf-8")).get("disc")
+        return os.path.abspath(d), pid, exe, disc
+    sys.exit(f"no port {port!r} under ports/")
+
+
+def scenarios_for(pid):
+    return PORT_SCENARIOS.get(pid, SCENARIOS)
+
+
 def port_paths(port):
-    pdir = os.path.join(ROOT, "ports", f"{port}-recomp")
-    exe = os.path.join(pdir, "build", "game", f"{port}-recomp.exe")
-    if not os.path.exists(exe):
-        exe = exe[:-4]
+    pdir, _, exe, _ = resolve_port(port)
     return pdir, exe
 
 
@@ -70,13 +119,17 @@ def find_disc(port):
 
 
 def run_scenario(a):
-    frames, press, shots, _ = SCENARIOS[a.scenario]
+    _, pid, _, recorded_disc = resolve_port(a.port)
+    table = scenarios_for(pid)
+    if a.scenario not in table:
+        sys.exit(f"{pid}: no scenario {a.scenario!r} ({', '.join(table)})")
+    frames, press, shots, _ = table[a.scenario]
     frames = a.frames or frames
     shots = a.shots if a.shots is not None else shots
     pdir, exe = port_paths(a.port)
     if a.exe:
         exe = os.path.abspath(a.exe)  # another build of the same port (tools/abtest.py)
-    disc = a.disc or find_disc(a.port)
+    disc = a.disc or recorded_disc or find_disc(a.port)
     out = os.path.abspath(a.out or os.path.join(ROOT, "work", "sc", f"{a.scenario}-{time.strftime('%H%M%S')}"))
     if os.path.isdir(out):
         shutil.rmtree(out)
@@ -90,7 +143,7 @@ def run_scenario(a):
             "--rtc-seed", "1000000", "--max-frames", str(frames), "--wav", os.path.join(out, "audio.wav")]
     if a.exe:
         # A copied executable cannot find the config beside the build: name it.
-        args += ["--config", os.path.join(pdir, "game", f"{a.port}.toml")]
+        args += ["--config", os.path.join(pdir, "game", f"{pid}.toml")]
     # The play path (double-click) turns `scale` into --scale; flags runs do not, so do it here,
     # with the game's default of 2.
     scale = next((kv.split("=", 1)[1] for kv in a.set if kv.split("=", 1)[0].strip() == "scale"), "2")
@@ -220,8 +273,8 @@ def compare(dirs):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scenario", help="|".join(SCENARIOS) + "|list")
-    ap.add_argument("--port", default="soulcalibur")
+    ap.add_argument("scenario", help="a scenario of the port (`list` shows them)")
+    ap.add_argument("--port", default="soulcalibur", help="port id, slug or folder")
     ap.add_argument("--disc")
     ap.add_argument("--out")
     ap.add_argument("--frames", type=int)
@@ -236,11 +289,9 @@ def main():
     if a.compare:
         return compare(a.compare)
     if a.scenario == "list":
-        for k, (frames, _, shots, what) in SCENARIOS.items():
+        for k, (frames, _, shots, what) in scenarios_for(resolve_port(a.port)[1]).items():
             print(f"{k:11} {frames:6} frames  {what}")
         return 0
-    if a.scenario not in SCENARIOS:
-        sys.exit(f"unknown scenario {a.scenario}")
     return run_scenario(a)
 
 
