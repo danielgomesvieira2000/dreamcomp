@@ -151,6 +151,8 @@ int cmd_emit(int argc, char** argv) {
     std::uint32_t base = 0;
     std::vector<dream::translator::FunctionSpec> fns;
     dream::translator::EmitOptions opt;
+    if (const char* e = std::getenv("DREAM_NO_FP_CLONES"); e && *e && *e != '0')
+        opt.fp_entry_clones = false;  // A/B builds (tools/dc.py passes no translator flags)
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--image") && i + 1 < argc)
             image = argv[++i];
@@ -170,6 +172,8 @@ int cmd_emit(int argc, char** argv) {
             opt.trace = true;
         else if (!std::strcmp(argv[i], "--no-irq"))
             opt.irq_checks = false;
+        else if (!std::strcmp(argv[i], "--no-fp-clones"))
+            opt.fp_entry_clones = false;
         else if (!std::strcmp(argv[i], "--functions") && i + 1 < argc) {
             std::string err;
             if (!dream::translator::load_functions_json(argv[++i], fns, err)) {
@@ -470,21 +474,25 @@ int translate_view(const dream::translator::GameConfig& cfg, const dream::transl
             << r.switches << " discovered\ndirect jsr/bsrf calls " << res.direct_calls
             << "\npatched pool words (not folded) " << res.patched_words
             << "\nentry modes inferred " << res.entries_inferred << " (ambiguous "
-            << res.entries_unknown << ")\n";
+            << res.entries_unknown << ")\nentry-mode clones " << res.fp_entry_clones
+            << " (runtime FP branches left in them " << res.fp_clone_branches << ")\n";
         for (const auto& w : res.warnings) rep << "note: " << w << "\n";
     }
     report_coverage_gaps(res);
     std::fprintf(stderr,
                  "%s: %zu functions (%zu named), %zu instructions, %zu not lowered, %zu FP runtime "
-                 "branches, %zu switch tables -> %s.cpp\n",
+                 "branches (%zu entry-mode clones, %zu in them), %zu switch tables -> %s.cpp\n",
                  stem.c_str(), fns.size(), named, res.instructions, res.unlowered,
-                 res.fp_runtime_branches, res.switches_recovered, base.string().c_str());
+                 res.fp_runtime_branches, res.fp_entry_clones, res.fp_clone_branches,
+                 res.switches_recovered, base.string().c_str());
     return 0;
 }
 
 int cmd_game(int argc, char** argv) {
     std::string config, out_dir;
     dream::translator::EmitOptions opt;
+    if (const char* e = std::getenv("DREAM_NO_FP_CLONES"); e && *e && *e != '0')
+        opt.fp_entry_clones = false;  // A/B builds (tools/dc.py passes no translator flags)
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--config") && i + 1 < argc)
             config = argv[++i];
@@ -498,6 +506,8 @@ int cmd_game(int argc, char** argv) {
             opt.trace = true;
         else if (!std::strcmp(argv[i], "--no-irq"))
             opt.irq_checks = false;
+        else if (!std::strcmp(argv[i], "--no-fp-clones"))
+            opt.fp_entry_clones = false;
         else
             return usage(2);
     }

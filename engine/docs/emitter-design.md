@@ -111,6 +111,28 @@ runtime test of `c.fpscr` and counts it (`EmitResult::fp_runtime_branches`); per
 `FRCHG` and `LDS FPSCR` swap the two 16-word banks so `c.fr` is always the front bank. `write_fpscr`
 also programs the host rounding and denormal mode through the fenv layer (ADR 16).
 
+### Entry-mode clones (dreamcomp)
+
+On real binaries the entry mode is rarely provable: one caller in an unknown mode (an FPSCR
+restored from memory, a computed `lds`) makes every function it reaches unknown, transitively.
+Soulcalibur and Jet Grind Radio both report `entry modes inferred 0` and 84 000-87 000 runtime FP
+tests. Yet the guest is almost always in the default mode (PR = SZ = 0): assuming it everywhere
+removed all but 87 tests and left a Soulcalibur fight pixel-identical, but that is not safe.
+
+So a function whose entry mode is unknown *and* whose body needed runtime tests gets a second
+body, `<name>__fpd`, compiled with the default entry mode (`fpscr_entry`'s PR/SZ bits) as known.
+The wrapper every call goes through tests the guest's actual bits once:
+
+    void fn(Ctx& c, Memory& m) { if ((c.fpscr & 0x00180000u) == <default>) fn__fpd(c, m, 0);
+                                 else fn__resume(c, m, 0); }
+
+Exact by construction: the clone runs only in the mode it was compiled for, the data-flow inside it
+is the same conservative analysis (unknown after a callee with an unknown summary keeps its runtime
+test), and resumes after a non-local return keep using `__resume`. Soulcalibur: 2221 clones, 87
+tests left in them; fight, character select and attract screenshots and the full fight audio
+bit-identical. `EmitOptions::fp_entry_clones` (on), `--no-fp-clones` or `DREAM_NO_FP_CLONES=1` for
+A/B builds; the report prints `entry-mode clones`.
+
 ## Interrupt checks (ADR 7)
 
 `if (c.irq_pending) dream_deliver_irq(c, m);` at function entry and at every back-edge `goto`. The

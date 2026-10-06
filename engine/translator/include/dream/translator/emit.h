@@ -55,6 +55,10 @@ struct EmitOptions {
     bool replay_hooks = false;
     bool irq_checks = true;  // interrupt polls at entry and back-edges (ADR 7)
     bool overlay = false;    // table entries carry the code words they were translated from
+    // A function whose entry FPSCR mode the analysis could not pin down gets a second body compiled
+    // for the default mode, chosen by its wrapper when the guest arrives in that mode (dreamcomp;
+    // docs/emitter-design.md "Entry-mode clones"). Off: every such function keeps its runtime tests.
+    bool fp_entry_clones = true;
 };
 
 // A run of bytes inside a function that discovery never decoded. Often a literal pool, sometimes
@@ -73,6 +77,8 @@ struct EmitResult {
     std::size_t unknown_summaries = 0;
     std::size_t entries_inferred = 0;    // functions whose entry PR/SZ differs from the default
     std::size_t entries_unknown = 0;     // functions reached in more than one mode (runtime tests)
+    std::size_t fp_entry_clones = 0;     // second bodies compiled for the default entry mode
+    std::size_t fp_clone_branches = 0;   // runtime FP tests left inside those bodies
     std::size_t patched_words = 0;       // pool words written by unit code, read at run time
     std::size_t direct_calls = 0;        // jsr/bsrf sites resolved to a direct call
     std::size_t switches_recovered = 0;  // computed jumps lowered through a recovered table

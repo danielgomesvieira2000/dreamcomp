@@ -232,18 +232,26 @@ public:
         return summary_;
     }
 
+    // Entry-mode clone (EmitOptions::fp_entry_clones): this emitter writes only a body named
+    // <name><suffix>, compiled with the spec's entry mode taken as known.
+    void set_clone_suffix(std::string s) { clone_suffix_ = std::move(s); }
+    // The wrapper picks <name>__fpd when the guest's FPSCR PR/SZ bits equal `bits`.
+    void set_fast_clone(std::uint32_t bits) { fast_clone_bits_ = bits; }
+
     std::string run() {
         discover();
         analyse_fp_modes(/*relative=*/false);
         std::ostringstream out;
         const std::string name = spec_.name.empty() ? default_name(spec_.entry) : spec_.name;
-        out << "// " << name << ": guest " << hex(spec_.entry) << ".." << hex(spec_.end) << "\n";
+        out << "// " << name << (clone_suffix_.empty() ? "" : clone_suffix_) << ": guest "
+            << hex(spec_.entry) << ".." << hex(spec_.end) << "\n";
         collect_call_returns();
         // The body is the resume entry (docs/emitter-design.md, "Non-local returns"): entered with
         // resume_pc = 0 by the plain function, or at a block start / call-return address after a
         // non-local return. entry_pr is what an `rts` must return to; anything else is a non-local
         // return.
-        out << "static void " << name << "__resume(Ctx& c, Memory& m, std::uint32_t resume_pc) {\n";
+        out << "static void " << name << (clone_suffix_.empty() ? "__resume" : clone_suffix_)
+            << "(Ctx& c, Memory& m, std::uint32_t resume_pc) {\n";
         out << "    [[maybe_unused]] const std::uint32_t entry_pr = c.pr;\n";
         // Poll points record the exact guest pc first: an interrupt handler that switches tasks
         // returns through RTE to SPC, and run_guest re-enters this function there.
@@ -299,6 +307,17 @@ public:
             }
         }
         out << "}\n";
+        // After the body, so every literal the lowering read has been recorded and a pool is not
+        // mistaken for code that went missing. Not for a clone: the original records it.
+        if (clone_suffix_.empty())
+            report_coverage();
+        return out.str();
+    }
+
+    // The plain entry every call goes through (after run(), which it does not repeat).
+    std::string wrapper() {
+        const std::string name = spec_.name.empty() ? default_name(spec_.entry) : spec_.name;
+        std::ostringstream out;
         out << "void " << name << "(Ctx& c, Memory& m) { ";
         if (opt_.replay_hooks) {
             // The mode this function was compiled for travels with the hook, so a development run
@@ -314,17 +333,20 @@ public:
         }
         if (!spec_.hook.empty() && spec_.hook_entry)
             out << "if (dream_hook_entry_" << spec_.hook << "(c, m)) return; ";
+        if (fast_clone_bits_ != 0xFFFFFFFFu)
+            out << "if ((c.fpscr & 0x00180000u) == " << hexu(fast_clone_bits_) << ") " << name
+                << "__fpd(c, m, 0); else ";
         out << name << "__resume(c, m, 0); ";
         if (!spec_.hook.empty() && spec_.hook_exit)
             out << "dream_hook_exit_" << spec_.hook << "(c, m); ";
         out << "}\n";
-        // After the body, so every literal the lowering read has been recorded and a pool is not
-        // mistaken for code that went missing.
-        report_coverage();
         return out.str();
     }
 
 private:
+    std::string clone_suffix_;
+    std::uint32_t fast_clone_bits_ = 0xFFFFFFFFu;
+
     Instr at(std::uint32_t a) const { return sh4::decode(img_.read16(a)); }
 
     Op last_op(std::uint32_t start) const {
@@ -1827,9 +1849,26 @@ EmitResult emit_unit(const Image& image, const std::vector<FunctionSpec>& functi
         }
     }
     for (const auto& f : specs) {
+        const std::size_t before = result.fp_runtime_branches;
         FunctionEmitter fe(image, f, options, known, summaries, result);
         fe.set_written(&written);
-        src << fe.run() << "\n";
+        const std::string body = fe.run();
+        // Entry-mode clone: only where the entry mode was unknown and that cost runtime tests.
+        if (options.fp_entry_clones && result.fp_runtime_branches > before &&
+            (f.entry_pr_unknown || f.entry_sz_unknown)) {
+            FunctionSpec fast = f;
+            fast.entry_pr_unknown = fast.entry_sz_unknown = false;  // the default bits in fpscr_entry
+            EmitResult scratch;
+            FunctionEmitter fc(image, fast, options, known, summaries, scratch);
+            fc.set_written(&written);
+            fc.set_clone_suffix("__fpd");
+            src << "static void " << f.name << "__fpd(Ctx& c, Memory& m, std::uint32_t resume_pc);\n";
+            src << fc.run() << "\n";
+            ++result.fp_entry_clones;
+            result.fp_clone_branches += scratch.fp_runtime_branches;
+            fe.set_fast_clone(f.fpscr_entry & 0x00180000u);
+        }
+        src << body << fe.wrapper() << "\n";
     }
     src << "namespace {\n";
     if (options.overlay) {
