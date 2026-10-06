@@ -24,7 +24,9 @@ Entry gate: met (boots to menus on the engine).
 | Plays a full arcade run with no fault | not verified |
 | Saves to the per-user VMU and loads them | done 2026-10-05: fresh card → "Successfully saved"; next boot → "Successfully loaded" (27 block reads) |
 | Intro (frames 60-200): checkered gaps in the green tile background | **unverified**: may be the original effect; needs comparison with real hardware / a reference video |
-| Daniel playtests and confirms | pending |
+| Daniel playtests and confirms | first playtests 2026-10-05; reported crackling audio, wrong textures/HUD, performance |
+| Accuracy pass 2026-10-06 (from Daniel's report, audits against Flycast master) | **graphics:** HUD black boxes (PT_ALPHA_REF power-on value), character shadows (modifier volumes), per-vertex/table fog, stale textures after a stage change (VRAM write tracking), rolling menu spilling out of its box (user tile clip), translucent depth/sort as Flycast, mipmap chains, per-sampler texture keys; **audio:** mixer/DSP/ARM7 audited line by line against Flycast -- identical with Flycast's DSP on; the crackle is the effects mix clipping on loud hits plus voice-reuse ticks, both also in Flycast (DSP on); small AICA register fixes. Each verified by scenario screenshots/diffs and 0 validation errors |
+| Performance pass 2026-10-06 | 7x faster twiddled decode, staging ring, pipeline cache, in-game menu on its own thread, game on its own thread (window move/resize no longer stalls); late frames per fight run ~10 -> ~4 (scene changes only) |
 
 ## P2 — Enhancements
 
@@ -37,7 +39,7 @@ Entry gate: met (boots to menus on the engine).
 | Mods: file replacement | virtual disc layer (`ModDisc`) that serves `<settings dir>/mods/<name>/<path>` in place of disc files, re-laying out ISO9660 extents; `--mod DIR`, setting `mods`, launcher list | works 2026-10-05: same-size (in place) and larger (relocated) replacements logged on Soulcalibur; first-wins order verified; in-game effect of a real mod not yet shown |
 | Mods: code | `[hooks]` + port sources; later a mod DLL ABI | hooks done |
 | Higher frame rate | geometry interpolation between game frames (docs/INTERPOLATION.md); logic stays at 60 | implemented; G1-G3 passed, G4 needs a >60 Hz display (auto mode off on 60 Hz) |
-| Settings UI / launcher (disc picker) | N64-recomp-style frontend ([FRONTEND.md](FRONTEND.md)): launcher list (Load/Start Game, Controls, Settings, Mods, Quit) + tabbed settings panel with description pane, Apply, Quit Game confirm; the same panel over the running game on Escape / pad Select (CPU-rendered, composited) | redesign done 2026-10-05: screenshots of every screen and of the in-game panel over a running fight checked; keyboard, synthetic pad and mouse scripted; Apply (live: fit, HUD, rumble, volume, fullscreen) and Quit verified; **no physical pad tried, Daniel has not used it yet**; window move/resize still stalls the game (guest thread pending) |
+| Settings UI / launcher (disc picker) | N64-recomp-style frontend ([FRONTEND.md](FRONTEND.md)): launcher list (Load/Start Game, Controls, Settings, Mods, Quit) + tabbed settings panel with description pane, Apply, Quit Game confirm; the same panel over the running game on Escape / pad Select (rendered on its own thread, blended on the GPU) | 2026-10-06: RecompFrontend-style option rows (all choices visible, greyed when unavailable), Controls tab with player cards and two binding slots per input (PromptFont glyphs), real mouse and keyboard verified; **no physical pad tried** |
 
 ## P3 — Platforms
 
@@ -55,6 +57,8 @@ Entry gate: met (boots to menus on the engine).
 | Automated screenshots / contact sheet (`dc.py shots`) | done |
 | Headless reports (`dc.py report`) | done |
 | Profiler: symbolised per-function hot list from `--sample` | not started |
+| Scripted scenarios with screenshots, audio analysis, pacing and before/after diffs (`tools/scenario.py`, `tools/audio_check.py`) | done 2026-10-06 |
+| Debug switches: `DREAM_AICA_PROBE`, `DREAM_PVR_WATCH`, `DREAM_TEX_SLOW`, `DREAM_NO_*` A/B switches; `pacing:` / `textures:` report lines | done 2026-10-06 (docs/TOOLS.md) |
 | Regression gate per port (engine `tools/regress/gate.py`) | not wired up |
 | CI (audit + engine tests + port config lint) | not started |
 
