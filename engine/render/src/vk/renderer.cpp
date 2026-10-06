@@ -529,7 +529,9 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
                                     &fallback_set_, 0, nullptr);
         }
-        if (pcw_offset(p.pcw))
+        // The offset colour exists only for textured polygons (Flycast reads it inside its texture
+        // block; an untextured header's offset word is unused).
+        if (pcw_offset(p.pcw) && pcw_texture(p.pcw))
             push.mode |= 16;
         if (item.alpha_test) {
             push.mode |= 32;
@@ -683,11 +685,19 @@ void Renderer::draw_modifier_volumes(VkCommandBuffer cmd, const Frame& frame,
                                      const FrameGeometry& geometry, VkBuffer geometry_buffer) {
     if (!stencil_ || frame.modifiers.empty() || std::getenv("DREAM_NO_MODVOL"))
         return;
+    // Only the opaque modifier list shades (Flycast draws global_param_mvo only).
+    modvol_tris_.clear();
+    for (const ModifierTriangle& t : frame.modifiers)
+        if (!t.translucent)
+            modvol_tris_.push_back(t);
+    if (modvol_tris_.empty())
+        return;
+    const std::vector<ModifierTriangle>& mods = modvol_tris_;
     // Triangles, then the final quad as two more, all in one buffer: x, y in pixels, z = 1/w.
-    const std::size_t tris = frame.modifiers.size();
+    const std::size_t tris = mods.size();
     modvol_staging_.resize((tris + 2) * 9);
     float* out = modvol_staging_.data();
-    for (const ModifierTriangle& t : frame.modifiers)
+    for (const ModifierTriangle& t : mods)
         for (unsigned i = 0; i < 3; ++i) {
             *out++ = t.x[i];
             *out++ = t.y[i];
@@ -728,11 +738,11 @@ void Renderer::draw_modifier_volumes(VkCommandBuffer cmd, const Frame& frame,
     };
     for (std::size_t first = 0; first < tris;) {
         std::size_t end = first + 1;
-        while (end < tris && frame.modifiers[end].header == frame.modifiers[first].header)
+        while (end < tris && mods[end].header == mods[first].header)
             ++end;
-        const std::uint32_t isp = frame.modifiers[first].isp;
+        const std::uint32_t isp = mods[first].isp;
         const std::uint32_t mv_mode = isp >> 29;            // volume instruction
-        const bool volume_last = ((isp >> 26) & 1u) != 0;  // ISP VolumeLast
+        const bool volume_last = mods[first].volume_last;  // header PCW Volume bit
         const std::uint32_t cull = (isp >> 27) & 3u;
         if (base == SIZE_MAX)
             base = first;

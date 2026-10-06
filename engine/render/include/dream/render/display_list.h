@@ -62,6 +62,8 @@ struct ModifierTriangle {
     std::uint32_t isp = 0;
     std::uint32_t header = 0;  // which modifier-volume header it follows (dreamcomp): the unit the
                                // hardware's volume instructions apply to
+    bool volume_last = false;  // the header's PCW Volume bit: last polygon of a volume (Flycast)
+    bool translucent = false;  // from the translucent modifier list (not drawn, as in Flycast)
 };
 
 // Everything one render needs.
@@ -127,6 +129,7 @@ private:
     // be followed by several strips, each closed by an end-of-strip flag.
     bool header_active_ = false;
     std::uint32_t modifier_headers_ = 0;
+    bool modifier_last_ = false, modifier_translucent_ = false;
     Pending pending_ = Pending::None;
     std::uint32_t held_[8]{};  // first half of a 64-byte parameter
 

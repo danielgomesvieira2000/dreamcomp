@@ -14,7 +14,7 @@ using u32 = std::uint32_t;
 
 // PVR register offsets from 0x005F8000, as 32-bit words.
 constexpr std::size_t kParamBase = 0x020 / 4;
-constexpr std::size_t kFpuShadScale = 0x098 / 4;
+constexpr std::size_t kFpuShadScale = 0x074 / 4;  // (0x098 is ISP_FEED_CFG; fixed dreamcomp)
 constexpr std::size_t kIspBackgndD = 0x088 / 4;
 constexpr std::size_t kIspBackgndT = 0x08C / 4;
 

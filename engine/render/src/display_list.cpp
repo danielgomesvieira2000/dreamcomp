@@ -255,6 +255,9 @@ void DisplayList::handle_header(const std::uint32_t w[8]) {
 
     if (pcw_para_type(pcw) == kSprite) {
         // A sprite header carries the colours for all four corners and is always 32 bytes.
+        // Its corners come in the opposite winding, so the cull mode's low bit flips (Flycast
+        // ta_vtx.cpp: isp.CullMode ^= 1).
+        current_.isp ^= 1u << 27;
         sprite_base_ = w[4];
         sprite_offset_ = w[5];
         in_sprite_ = true;
@@ -268,6 +271,8 @@ void DisplayList::handle_header(const std::uint32_t w[8]) {
         // A modifier volume header only sets the ISP word; its vertices follow.
         header_active_ = true;
         ++modifier_headers_;
+        modifier_last_ = pcw_volume(pcw) != 0;
+        modifier_translucent_ = list_ == static_cast<unsigned>(ListType::TranslucentModifier);
         return;
     }
 
@@ -431,6 +436,8 @@ void DisplayList::handle_modifier_vertex(const std::uint32_t a[8], const std::ui
     ModifierTriangle t;
     t.isp = current_.isp;
     t.header = modifier_headers_;
+    t.volume_last = modifier_last_;
+    t.translucent = modifier_translucent_;
     t.x[0] = as_float(a[1]);
     t.y[0] = as_float(a[2]);
     t.z[0] = as_float(a[3]);

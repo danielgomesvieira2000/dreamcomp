@@ -113,6 +113,7 @@ private:
     HostBuffer modvol_ring_[kModvolRing];
     unsigned modvol_next_ = 0;
     std::vector<float> modvol_staging_;
+    std::vector<ModifierTriangle> modvol_tris_;
     void save_pipeline_cache();
     VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
     std::string pipeline_cache_path_;

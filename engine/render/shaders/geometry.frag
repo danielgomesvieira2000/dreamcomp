@@ -74,8 +74,13 @@ void main() {
     // Punch-through polygons are opaque geometry with holes in it: the hardware keeps or discards
     // a pixel outright rather than blending, so the list can be drawn with depth writes on and in
     // any order. Anything at or below the threshold is not drawn at all.
-    if ((push.mode & 32) != 0 && colour.a < push.alpha_ref)
-        discard;
+    if ((push.mode & 32) != 0) {
+        // As Flycast: the test sees the alpha at 8 bits, and what passes is opaque.
+        colour.a = round(colour.a * 255.0) / 255.0;
+        if (colour.a < push.alpha_ref)
+            discard;
+        colour.a = 1.0;
+    }
 
     o_colour = clamp(colour, 0.0, 1.0);
 
