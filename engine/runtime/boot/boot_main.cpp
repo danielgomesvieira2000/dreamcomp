@@ -3454,17 +3454,22 @@ void host_profiler_stop() {
         CloseHandle(p.sampler);
     }
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - p.started).count();
-    if (FILE* f = std::fopen(p.file.c_str(), "w")) {
+    FILE* f = std::fopen(p.file.c_str(), "w");
+    if (f) {
         std::fprintf(f, "# dreamcomp host profile: %llu samples over %.2f s, interval %u us, %llu failed\n",
                      static_cast<unsigned long long>(p.samples), secs, p.interval_us,
                      static_cast<unsigned long long>(p.failed));
         for (const auto& [stack, count] : p.stacks)
             std::fprintf(f, "%llu %s\n", static_cast<unsigned long long>(count), stack.c_str());
         std::fclose(f);
+        std::printf("profile: %llu samples (%.0f per second, %llu failed) written to %s\n",
+                    static_cast<unsigned long long>(p.samples),
+                    secs > 0 ? static_cast<double>(p.samples) / secs : 0.0,
+                    static_cast<unsigned long long>(p.failed), p.file.c_str());
+    } else {
+        std::fprintf(stderr, "profile: cannot write %s (%llu samples lost)\n", p.file.c_str(),
+                     static_cast<unsigned long long>(p.samples));
     }
-    std::printf("profile: %llu samples (%.0f per second, %llu failed) written to %s\n",
-                static_cast<unsigned long long>(p.samples), secs > 0 ? static_cast<double>(p.samples) / secs : 0.0,
-                static_cast<unsigned long long>(p.failed), p.file.c_str());
     if (p.thread)
         CloseHandle(p.thread);
     delete g_prof;

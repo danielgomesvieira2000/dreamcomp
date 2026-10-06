@@ -154,7 +154,11 @@ def run_scenario(a):
         args += ["--press", press]
     if shots:
         args += ["--screenshot-at", shots]
-    args += a.extra
+    # The game runs in the output folder: file paths after `--` are made absolute against the
+    # caller's directory first (as tools/dc.py does), or a relative --profile/--wav lands nowhere.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dc import absolute_file_args
+    args += absolute_file_args(a.extra)
     env = dict(os.environ)
     for kv in a.env:
         k, v = kv.split("=", 1)
