@@ -107,7 +107,9 @@ static_assert(offsetof(PushConstants, fog_vert) == 32, "push constants must matc
 // size. Everything the sampler reads is decided per texture in prepare(), so it does not belong
 // here; two polygons that share these bits share the decoded image.
 constexpr std::uint64_t texture_key(const Polygon& p) {
-    return (static_cast<std::uint64_t>(p.tcw) << 32) | (p.tsp & 0x3Fu);
+    // Size bits, plus the sampler bits (TSP 8-18), which choose the descriptor set too.
+    return (static_cast<std::uint64_t>(p.tcw) << 32) | (p.tsp & 0x3Fu) |
+           (static_cast<std::uint64_t>((p.tsp >> 8) & 0x7FFu) << 7);
 }
 
 // Parameter control word and TSP fields the fragment shader needs.

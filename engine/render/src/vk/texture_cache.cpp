@@ -1,6 +1,8 @@
 // See texture_cache.h.
 #include "dream/render/vk/texture_cache.h"
 
+#include "dream/render/png.h"
+
 #include <cstdlib>
 #include <algorithm>
 #include <chrono>
@@ -175,7 +177,8 @@ std::size_t TextureCache::invalidate_range(std::uint32_t begin, std::uint32_t en
 }
 
 VkSampler TextureCache::sampler_for(std::uint32_t tsp, bool tiled) {
-    const std::uint32_t key = tsp_sampler_key(tsp) | (tiled ? 0x40u : 0u);
+    const std::uint32_t key =
+        tsp_sampler_key(tsp) | (tiled ? 0x40u : 0u) | (((tsp >> 8) & 0xFu) << 7);
     if (auto it = samplers_.find(key); it != samplers_.end())
         return it->second;
 
@@ -186,7 +189,13 @@ VkSampler TextureCache::sampler_for(std::uint32_t tsp, bool tiled) {
     sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sci.magFilter = bilinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     sci.minFilter = sci.magFilter;
-    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    // Trilinear filter modes blend between levels; the others take the nearest (dreamcomp).
+    sci.mipmapMode = tsp_filter_mode(tsp) >= 2 ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                                               : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    // MipMapD, as Flycast's D_Adjust_LoD_Bias table.
+    static constexpr float kLodBias[16] = {0.f, -4.f, -2.f, -1.f, 0.f, 0.f, 0.f, 0.f,
+                                           0.f, 0.f,  0.f,  0.f,  0.f, 0.f, 0.f, 0.f};
+    sci.mipLodBias = kLodBias[(tsp >> 8) & 0xFu];
     sci.addressModeU = address_mode(tsp_clamp_u(tsp) != 0, tsp_flip_u(tsp) != 0, tiled);
     sci.addressModeV = address_mode(tsp_clamp_v(tsp) != 0, tsp_flip_v(tsp) != 0, tiled);
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -207,24 +216,40 @@ bool TextureCache::rendered_into(const TextureInfo& info) const {
 }
 
 bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::uint32_t>& pixels,
-                          std::uint32_t width, std::uint32_t height) {
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
+                          std::uint32_t width, std::uint32_t height,
+                          const std::vector<std::vector<std::uint32_t>>* mips) {
+    // Every level goes into one staging area, base level first.
+    const std::uint32_t levels = 1u + (mips ? static_cast<std::uint32_t>(mips->size()) : 0u);
+    std::vector<VkDeviceSize> offsets(levels);
+    VkDeviceSize bytes = 0;
+    for (std::uint32_t l = 0; l < levels; ++l) {
+        offsets[l] = bytes;
+        const std::uint32_t lw = std::max(1u, width >> l), lh = std::max(1u, height >> l);
+        bytes += (static_cast<VkDeviceSize>(lw) * lh * 4 + 15u) & ~VkDeviceSize{15};
+    }
+    auto level_data = [&](std::uint32_t l) -> const std::vector<std::uint32_t>& {
+        return l == 0 ? pixels : (*mips)[l - 1];
+    };
     VkBuffer source = VK_NULL_HANDLE;
     VkDeviceSize source_offset = 0;
     HostBuffer& ring = stage_ring_[stage_slot_];
     const VkDeviceSize at = (stage_used_ + 15u) & ~VkDeviceSize{15};
+    std::uint8_t* dst = nullptr;
     if (at + bytes <= kStageBytes && ring.ensure(*ctx_, kStageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) &&
         ring.mapped()) {
-        std::memcpy(static_cast<std::uint8_t*>(ring.mapped()) + at, pixels.data(),
-                    static_cast<std::size_t>(bytes));
+        dst = static_cast<std::uint8_t*>(ring.mapped()) + at;
         source = ring.handle();
         source_offset = at;
         stage_used_ = at + bytes;
     } else {
-        if (!e.staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+        if (!e.staging.ensure(*ctx_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) || !e.staging.mapped())
             return false;
-        e.staging.write(pixels.data(), static_cast<std::size_t>(bytes));
+        dst = static_cast<std::uint8_t*>(e.staging.mapped());
         source = e.staging.handle();
+    }
+    for (std::uint32_t l = 0; l < levels; ++l) {
+        const auto& data = level_data(l);
+        std::memcpy(dst + offsets[l], data.data(), data.size() * 4);
     }
 
     VkImageCreateInfo ici{};
@@ -232,7 +257,7 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
     ici.imageType = VK_IMAGE_TYPE_2D;
     ici.format = VK_FORMAT_R8G8B8A8_UNORM;
     ici.extent = {width, height, 1};
-    ici.mipLevels = 1;
+    ici.mipLevels = levels;
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -262,17 +287,20 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
     to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_dst.image = e.image;
-    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
     to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                          0, nullptr, 0, nullptr, 1, &to_dst);
 
-    VkBufferImageCopy copy{};
-    copy.bufferOffset = source_offset;
-    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, source, e.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           1, &copy);
+    std::vector<VkBufferImageCopy> copies(levels);
+    for (std::uint32_t l = 0; l < levels; ++l) {
+        copies[l] = VkBufferImageCopy{};
+        copies[l].bufferOffset = source_offset + offsets[l];
+        copies[l].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+        copies[l].imageExtent = {std::max(1u, width >> l), std::max(1u, height >> l), 1};
+    }
+    vkCmdCopyBufferToImage(cmd, source, e.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels,
+                           copies.data());
 
     VkImageMemoryBarrier to_read = to_dst;
     to_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -287,7 +315,7 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
     vci.image = e.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
     if (vkCreateImageView(ctx_->device(), &vci, nullptr, &e.view) != VK_SUCCESS)
         return false;
     return true;
@@ -299,8 +327,12 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         return VK_NULL_HANDLE;
     // The size lives in the TSP word, the rest in the TCW; together they identify the texture, and
     // the addressing the polygons need decides the sampler bound with it.
-    std::uint64_t key =
-        (static_cast<std::uint64_t>(tcw) << 32) | (tsp & 0x3Fu) | (tiled ? 0x40u : 0u);
+    std::uint64_t key = (static_cast<std::uint64_t>(tcw) << 32) | (tsp & 0x3Fu) |
+                        (tiled ? 0x40u : 0u) |
+                        // The sampler state (filter, clamp, flip, mip D-adjust: TSP bits 8-18)
+                        // is part of the descriptor set, so it is part of the key (dreamcomp):
+                        // the first polygon to use a texture no longer decides it for all.
+                        (static_cast<std::uint64_t>((tsp >> 8) & 0x7FFu) << 7);
     // Indexed textures: fold in the content of the palette banks they read (dreamcomp), so a
     // palette change selects a different entry instead of invalidating this one.
     {
@@ -381,11 +413,41 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         if (hashed)
             replacer_.dump(e.info, hash, pixels);
     }
+    // The rest of a mipmapped texture's chain (dreamcomp), down to 8x8: level l is the texture
+    // of half the size again, which mipmap_base_offset places in the chain.
+    std::vector<std::vector<std::uint32_t>> mips;
+    if (!replacement && e.info.mipmapped && !std::getenv("DREAM_NO_MIPMAPS")) {
+        for (std::uint32_t size = e.info.width / 2; size >= 8; size /= 2) {
+            TextureInfo level = e.info;
+            level.width = level.height = size;
+            std::vector<std::uint32_t> px;
+            if (!decode_texture(level, vram_, vram_size_, palette_, px))
+                break;
+            mips.push_back(std::move(px));
+        }
+        // DREAM_DUMP_MIPS=DIR (dreamcomp): every level of each mipmapped texture as PNGs, to
+        // check the chain decodes to the same picture at each size.
+        if (const char* dir = std::getenv("DREAM_DUMP_MIPS"); dir && *dir) {
+            static unsigned dumped = 0;
+            if (dumped < 64) {
+                ++dumped;
+                char name[64];
+                std::snprintf(name, sizeof name, "%06x_l0_%u.png", e.info.address, e.info.width);
+                png::write_file(std::filesystem::path(dir) / name, pixels.data(), e.info.width,
+                                e.info.height);
+                for (std::size_t l = 0; l < mips.size(); ++l) {
+                    const std::uint32_t sz = e.info.width >> (l + 1);
+                    std::snprintf(name, sizeof name, "%06x_l%zu_%u.png", e.info.address, l + 1, sz);
+                    png::write_file(std::filesystem::path(dir) / name, mips[l].data(), sz, sz);
+                }
+            }
+        }
+    }
     const auto t_upload = std::chrono::steady_clock::now();
     const bool uploaded =
         replacement
             ? upload(cmd, e, replacement->pixels, replacement->width, replacement->height)
-            : upload(cmd, e, pixels, e.info.width, e.info.height);
+            : upload(cmd, e, pixels, e.info.width, e.info.height, mips.empty() ? nullptr : &mips);
     upload_ns += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                 std::chrono::steady_clock::now() - t_upload)
                                                 .count());

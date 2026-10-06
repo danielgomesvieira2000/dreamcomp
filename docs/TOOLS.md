@@ -33,6 +33,8 @@ Engine-level instruments (flags of the port executable, `--help`): `--suggest-co
 | `DREAM_NO_FOG=1` | Do not apply fog, to compare |
 | `DREAM_NO_VRAM_INVALIDATE=1` | Keep cached textures when the guest rewrites their memory (the old behaviour), to compare |
 | `DREAM_NO_TILE_CLIP=1` | Ignore user tile clipping, to compare |
+| `DREAM_NO_MIPMAPS=1` | Upload only the base level of mipmapped textures, to compare |
+| `DREAM_DUMP_MIPS=DIR` | Write every level of the first 64 mipmapped textures as PNGs |
 | `DREAM_PROFILE=1` | Host time per scheduler event and rendering after the report |
 | `DREAM_SINGLE_THREAD=1` | Guest and window events on one thread (upstream behaviour) |
 

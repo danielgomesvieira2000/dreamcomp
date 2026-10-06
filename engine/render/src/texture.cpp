@@ -175,9 +175,10 @@ bool describe_texture(std::uint32_t tcw, std::uint32_t tsp, std::uint32_t stride
         return false;
     if (out.width == 0 || out.height == 0 || out.width > 1024 || out.height > 1024)
         return false;
-    // A mipmapped texture must be square and a power of two; the hardware has no other kind.
+    // A mipmapped texture is square; the hardware takes the width (Flycast does the same), so a
+    // header with a different height still draws rather than falling back to untextured.
     if (out.mipmapped && out.width != out.height)
-        return false;
+        out.height = out.width;
     return true;
 }
 

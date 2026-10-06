@@ -134,8 +134,10 @@ private:
     VkSampler sampler_for(std::uint32_t tsp, bool tiled);
     // `width` x `height` is the image uploaded, which for a pack replacement is not the guest's
     // size; `entry.info` keeps the guest's, which is what invalidation needs.
+    // `mips` (dreamcomp): the smaller levels of a mipmapped texture, each half the last.
     bool upload(VkCommandBuffer cmd, Entry& entry, const std::vector<std::uint32_t>& pixels,
-                std::uint32_t width, std::uint32_t height);
+                std::uint32_t width, std::uint32_t height,
+                const std::vector<std::vector<std::uint32_t>>* mips = nullptr);
     // True when the texture's bytes overlap a region the renderer has written a frame into: a
     // render to texture, whose content changes every frame and is never dumped or replaced.
     bool rendered_into(const TextureInfo& info) const;
