@@ -2562,7 +2562,9 @@ int main(int argc, char** argv) {
     sys.memory.map_mmio(dream::aica::Aica::kRegBase, dream::aica::Aica::kRegEnd, &aica);
     // ARM7 program-counter histogram sampled once per 44.1 kHz tick (where the driver spends its
     // time), and the optional recording.
-    std::unordered_map<std::uint32_t, std::uint64_t> arm_pcs;
+    // A count per instruction slot of the 2 MB sound RAM (dreamcomp): a hash map here cost ~1 % of
+    // the game thread, at 44 100 updates a second.
+    std::vector<std::uint32_t> arm_pcs((dream::aica::Arm7::kAramMask + 1) / 4, 0);
     std::vector<std::int16_t> pcm;  // interleaved L/R
 #ifdef DREAM_WITH_AUDIO
     // Playback follows the window by default: a run with a picture should have sound, and a
@@ -2587,7 +2589,7 @@ int main(int argc, char** argv) {
     (void)no_audio;
 #endif
     aica.on_sample = [&](std::int16_t l, std::int16_t r) {
-        ++arm_pcs[aica.arm.next_pc()];
+        ++arm_pcs[(aica.arm.next_pc() & dream::aica::Arm7::kAramMask) >> 2];
 #ifdef DREAM_WITH_AUDIO
         if (volume_percent != 100) {  // --volume (dreamcomp); --wav keeps the mixer's own level
             sink.push(static_cast<std::int16_t>(l * volume_percent / 100),
@@ -3046,7 +3048,9 @@ int main(int argc, char** argv) {
     }
     {
         std::vector<std::pair<std::uint64_t, std::uint32_t>> top;
-        for (const auto& [pc, n] : arm_pcs) top.push_back({n, pc});
+        for (std::size_t i = 0; i < arm_pcs.size(); ++i)
+            if (arm_pcs[i])
+                top.push_back({arm_pcs[i], static_cast<std::uint32_t>(i * 4)});
         std::sort(top.rbegin(), top.rend());
         std::printf("ARM7 pc histogram (per sample tick):");
         for (std::size_t i = 0; i < top.size() && i < 12; ++i)
