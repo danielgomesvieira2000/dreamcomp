@@ -998,11 +998,14 @@ void Mixer::dsp_step() {
     if (dsp_.dirty) {
         dsp_.dirty = false;
         dsp_.stopped = true;
-        for (u32 instr : dsp->MPRO)
-            if (instr != 0) {
+        dsp_.steps = 0;
+        for (int step = 0; step < 128; ++step) {
+            const u32* p = dsp->MPRO + step * 4;
+            if (p[0] | p[1] | p[2] | p[3]) {
                 dsp_.stopped = false;
-                break;
+                dsp_.steps = step + 1;
             }
+        }
     }
     if (dsp_.stopped)
         return;
@@ -1011,7 +1014,9 @@ void Mixer::dsp_step() {
     s32 FRC_REG = 0, Y_REG = 0;
     u32 ADRS_REG = 0;
     DspState& st = dsp_;
-    for (int step = 0; step < 128; ++step) {
+    // Up to the last real instruction only (dreamcomp): Soulcalibur's programs use 18 or 38 of
+    // the 128 steps, and the rest are all-zero steps that change nothing past the loop.
+    for (int step = 0; step < st.steps; ++step) {
         const u32* IPtr = dsp->MPRO + step * 4;
         if (IPtr[0] == 0 && IPtr[1] == 0 && IPtr[2] == 0 && IPtr[3] == 0) {
             X = st.TEMP[st.MDEC_CT & 0x7F];

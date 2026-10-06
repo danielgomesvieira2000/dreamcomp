@@ -58,6 +58,7 @@ Entry gate: met (boots to menus on the engine).
 | Automated screenshots / contact sheet (`dc.py shots`) | done |
 | Headless reports (`dc.py report`) | done |
 | Profiler: symbolised per-function hot list | done 2026-10-06 (`--profile`, `tools/profile.py`; Windows). First fight capture at real speed: busy 74.5 %; of that translated game code 38.7 %, sound 16.1 %, renderer CPU 9.3 %, memory access 9.2 %, SH-4 runtime 6.2 %, driver 5.2 % |
+| Profiler-driven optimisation, round 1 (2026-10-06) | Soulcalibur frame-wait idle skip (port hook; 47 % of emulated time was a wait loop calling an empty function), DSP stops at its last real step; both bit-identical. Unthrottled fight 46.7 -> 40.3 s host (-13.7 %). Tried and dropped: an exact ARM7 idle-pass skip (the driver's polling pass is 481 of a slice's 512 cycles, so no whole pass ever fits) |
 | Scripted scenarios with screenshots, audio analysis, pacing and before/after diffs (`tools/scenario.py`, `tools/audio_check.py`) | done 2026-10-06 |
 | Debug switches: `DREAM_AICA_PROBE`, `DREAM_PVR_WATCH`, `DREAM_TEX_SLOW`, `DREAM_NO_*` A/B switches; `pacing:` / `textures:` report lines | done 2026-10-06 (docs/TOOLS.md) |
 | Regression gate per port (engine `tools/regress/gate.py`) | not wired up |

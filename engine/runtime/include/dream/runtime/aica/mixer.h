@@ -69,6 +69,9 @@ public:
         std::int32_t MIXS[16];   // 20 bits
         std::uint32_t RBP, RBL, MDEC_CT;
         bool stopped, dirty;
+        // Steps up to and including the program's last non-zero instruction (dreamcomp): the
+        // all-zero steps after it only set dsp_step's locals, which nothing reads after the loop.
+        int steps;
     };
 
     struct Channel;  // defined in mixer.cpp
