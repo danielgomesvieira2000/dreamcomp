@@ -32,8 +32,11 @@ guest call chain. If it only happens in the window, say so.
 | Which function? | `DREAM_INTERP_FUNCS` / `DREAM_INTERP_RANGE` only redirect *indirect* calls (engine `runtime-devinterp.md`); prefer `--replay*` differential modes (dev build) |
 | When did state diverge? | `--write-hash FILE` on two runs; first differing line = frame |
 | Who wrote this address? | `DREAM_WATCH_WRITE`, `--write-log-range` |
-| Audio | `--wav out.wav --audio`, report `AICA` line, `DREAM_ARM7_WATCH`, `--dump-aram` |
-| Graphics | F11 / `--capture-at N` bundle, replay with `dream_render_view` |
+| Audio | `tools/scenario.py fight` -> `audio.txt` (clicks/clipping with timestamps from `tools/audio_check.py`); a click at sample S: rerun with `--env DREAM_AICA_PROBE=S-10,30,p.txt` (every voice, register write and changed register byte); report `AICA` line, `DREAM_ARM7_WATCH`, `--dump-aram` |
+| Graphics | F11 / `--capture-at N` bundle, replay with `dream_render_view`; `-- --dump-ta F --dump-ta-at-frame N --dump-vram V` then `dreamcomp_ta_dump F --region x0,y0,x1,y1` (list, PCW/ISP/TSP/TCW per poly, modifier count) and the `V.regs` PVR registers; `DREAM_PVR_WATCH=11C` for who writes a register; `DREAM_NO_MODVOL=1` to compare |
+| Stutter / speed | real-time `tools/scenario.py <s> --speed real`: report `pacing:` (late frames with textures/pipelines/render/decode ms) and `textures:`; `DREAM_TEX_SLOW=1`; `DREAM_PROFILE=1` |
+| Did my change alter anything else? | same scenario before/after, `tools/scenario.py x --compare A B`: summary side by side and per-screenshot pixel diff (`diff_*.png`) |
+| Reference behaviour | Flycast sources: `curl` raw files from github.com/flyinghead/flycast into `work/ref/flycast/` and compare line by line (an audit agent works well for a whole subsystem) |
 | Discovery gap | `--suggest-config FILE` |
 
 A counter improving is a hypothesis; the symptom gone, in Daniel's condition, is the proof.

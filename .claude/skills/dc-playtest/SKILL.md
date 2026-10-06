@@ -31,6 +31,10 @@ are not saved unless `--save-settings`.
 - Report: `python DC/tools/dc.py report DC/ports/<slug> --frames N --press ...`. Read: stop reason,
   untranslated targets, unmapped accesses, `AICA ... key-ons`, `PVR ... renders`.
 - Runs are deterministic (`--rtc-seed`): a crash at frame N reproduces at frame N.
+- Scenarios: `python DC/tools/scenario.py boot|menus|fight|fight-long --set aspect=4:3 --set
+  hud_fix=false` (Daniel's own settings: read his `settings.ini`, never write it). One folder per
+  run with `sheet.png`, `shot_*.png` (presented size), `audio.txt`, `summary.json`; `--speed real`
+  for pacing; `--compare A B` for before/after including a screenshot diff.
 
 ## D. "Take a look"
 
