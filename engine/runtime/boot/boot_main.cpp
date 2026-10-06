@@ -128,6 +128,9 @@ void print_guest_backtrace() {
 // written region can be worked out precisely enough to be safe, --framebuffer-writeback turns it
 // on and the default leaves video memory alone. Flycast reaches the same conclusion from the other
 // direction: its framebuffer emulation is off unless a title needs it.
+// CPU cycles the game thread used, set when the title's run ends (dreamcomp; report line).
+static std::uint64_t g_game_thread_cycles = 0;
+
 // Display sync (dreamcomp, --sync-display): when the display refreshes within 0.5 % of the guest's
 // frame rate, the pacing clock runs at the display's rate instead of the guest's. A 59.94 Hz game
 // on a 60 Hz panel otherwise falls one frame behind every 16.7 s and the panel shows a frame twice.
@@ -1172,6 +1175,11 @@ std::string report_text(dream::System& sys, dream::hle::Bios& bios, const dream:
                   static_cast<unsigned long long>(sys.spg.frames()), sys.ctx.pc, host_seconds,
                   host_seconds > 0 ? guest_s / host_seconds : 0.0);
     s += buf;
+    if (g_game_thread_cycles) {
+        std::snprintf(buf, sizeof buf, "game thread: %.3f G CPU cycles\n",
+                      static_cast<double>(g_game_thread_cycles) * 1e-9);
+        s += buf;
+    }
     std::snprintf(buf, sizeof buf, "interrupts delivered: %llu (max nesting %u), traps: %llu\n",
                   static_cast<unsigned long long>(sys.interrupts_delivered), sys.max_nesting,
                   static_cast<unsigned long long>(sys.traps_taken));
@@ -1639,6 +1647,9 @@ static void pacing_sleep_until(std::chrono::steady_clock::time_point t) {
 // frames). Windows only for now; elsewhere it says so and does nothing. Defined at the end.
 void host_profiler_start(const std::string& file, unsigned interval_us);
 void host_profiler_stop();
+// CPU cycles the calling thread has used (dreamcomp; Windows QueryThreadCycleTime, 0 elsewhere).
+// Unlike wall time it hardly moves with the clock speed a laptop picks, so it compares builds.
+std::uint64_t thread_cpu_cycles();
 
 int main(int argc, char** argv) {
     install_crash_handler();
@@ -2828,6 +2839,7 @@ int main(int argc, char** argv) {
     struct ProfileStop {
         bool on;
         ~ProfileStop() {
+            g_game_thread_cycles = thread_cpu_cycles();
             if (on)
                 host_profiler_stop();
         }
@@ -3412,6 +3424,12 @@ DWORD WINAPI sampler_main(void*) {
 }
 }  // namespace
 
+std::uint64_t thread_cpu_cycles() {
+    ULONG64 cycles = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &cycles);
+    return cycles;
+}
+
 void host_profiler_start(const std::string& file, unsigned interval_us) {
     if (g_prof)
         return;
@@ -3459,6 +3477,7 @@ void install_crash_handler() {
 void host_profiler_start(const std::string&, unsigned) {
     std::printf("profile: --profile is only implemented on Windows so far\n");
 }
+std::uint64_t thread_cpu_cycles() { return 0; }
 void host_profiler_stop() {}
 void precise_sleep_until(std::chrono::steady_clock::time_point t) {
     std::this_thread::sleep_until(t);

@@ -74,6 +74,8 @@ def run_scenario(a):
     frames = a.frames or frames
     shots = a.shots if a.shots is not None else shots
     pdir, exe = port_paths(a.port)
+    if a.exe:
+        exe = os.path.abspath(a.exe)  # another build of the same port (tools/abtest.py)
     disc = a.disc or find_disc(a.port)
     out = os.path.abspath(a.out or os.path.join(ROOT, "work", "sc", f"{a.scenario}-{time.strftime('%H%M%S')}"))
     if os.path.isdir(out):
@@ -86,6 +88,9 @@ def run_scenario(a):
     args = [exe, "--window", "--disc", disc, "--settings", os.path.join(out, "settings.ini"),
             "--vmu", os.path.join(out, "vmu.bin"), "--bindings", os.path.join(out, "bindings.txt"),
             "--rtc-seed", "1000000", "--max-frames", str(frames), "--wav", os.path.join(out, "audio.wav")]
+    if a.exe:
+        # A copied executable cannot find the config beside the build: name it.
+        args += ["--config", os.path.join(pdir, "game", f"{a.port}.toml")]
     # The play path (double-click) turns `scale` into --scale; flags runs do not, so do it here,
     # with the game's default of 2.
     scale = next((kv.split("=", 1)[1] for kv in a.set if kv.split("=", 1)[0].strip() == "scale"), "2")
@@ -110,6 +115,10 @@ def run_scenario(a):
     m = re.search(r"host: ([\d.]+) s \(([\d.]+)x real time\)", log)
     if m:
         summary["host_s"], summary["speed_x"] = float(m.group(1)), float(m.group(2))
+    # CPU cycles of the game thread: compares builds without the laptop's clock-speed noise.
+    m = re.search(r"game thread: ([\d.]+) G CPU cycles", log)
+    if m:
+        summary["thread_gcycles"] = float(m.group(1))
     m = re.search(r"audio: (\d+) samples played in \d+ blocks, (\d+) dropped, (\d+) underruns", log)
     if m:
         summary["audio_dropped"], summary["audio_underruns"] = int(m.group(2)), int(m.group(3))
@@ -171,7 +180,7 @@ def run_scenario(a):
 
 def compare(dirs):
     rows = [json.load(open(os.path.join(d, "summary.json"))) for d in dirs]
-    keys = ["speed_x", "audio_clicks", "audio_clipped", "audio_dropped", "audio_underruns", "drawn",
+    keys = ["thread_gcycles", "speed_x", "audio_clicks", "audio_clipped", "audio_dropped", "audio_underruns", "drawn",
             "presented", "tex_decoded", "tex_failed", "stop", "fault"]
     print("key".ljust(18) + "".join(os.path.basename(d.rstrip("/\\"))[:22].ljust(24) for d in dirs))
     for k in keys:
@@ -221,6 +230,7 @@ def main():
     ap.add_argument("--env", action="append", default=[], help="environment KEY=VALUE for the run")
     ap.add_argument("--speed", choices=["real", "max"], default="max")
     ap.add_argument("--compare", nargs="+", help="print summary.json of these output folders side by side")
+    ap.add_argument("--exe", help="run this executable instead of the port's build (A/B timing)")
     ap.add_argument("extra", nargs="*", help="extra launcher flags after --")
     a = ap.parse_args()
     if a.compare:

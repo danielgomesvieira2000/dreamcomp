@@ -6,39 +6,40 @@
 namespace dream::sched {
 
 int Scheduler::add(std::string name, Callback cb) {
-    events_.push_back(Event{std::move(name), std::move(cb), kNever});
+    events_.push_back(Event{std::move(name), std::move(cb), {}});
+    deadlines_.push_back(kNever);
     return static_cast<int>(events_.size() - 1);
 }
 
 void Scheduler::request(int id, std::uint64_t cycles) {
-    auto& e = events_[static_cast<std::size_t>(id)];
-    e.deadline = cycles == kNever ? kNever : now_ + cycles;
+    deadlines_[static_cast<std::size_t>(id)] = cycles == kNever ? kNever : now_ + cycles;
 }
 
 std::uint64_t Scheduler::next_deadline() const noexcept {
     std::uint64_t best = kNever;
-    for (const auto& e : events_)
-        if (e.deadline < best)
-            best = e.deadline;
+    for (const std::uint64_t d : deadlines_)
+        if (d < best)
+            best = d;
     return best;
 }
 
 void Scheduler::advance_to(std::uint64_t target) {
     for (;;) {
-        std::size_t idx = events_.size();
+        const std::size_t n = deadlines_.size();
+        std::size_t idx = n;
         std::uint64_t best = kNever;
-        for (std::size_t i = 0; i < events_.size(); ++i) {
-            if (events_[i].deadline < best) {
-                best = events_[i].deadline;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (deadlines_[i] < best) {
+                best = deadlines_[i];
                 idx = i;
             }
         }
-        if (idx == events_.size() || best > target)
+        if (idx == n || best > target)
             break;
         const std::uint64_t late = now_ > best ? now_ - best : 0;
         if (now_ < best)
             now_ = best;
-        events_[idx].deadline = kNever;  // the callback may re-arm
+        deadlines_[idx] = kNever;  // the callback may re-arm
         // Callbacks may throw (a closed window stops the run from the vblank event): the guard
         // keeps the nesting depth right whatever leaves the callback.
         struct Depth {

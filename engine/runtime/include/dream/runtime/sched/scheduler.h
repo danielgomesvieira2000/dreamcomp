@@ -24,12 +24,8 @@ public:
     // Arms the event `cycles` from now; 0 runs it on the next advance; kNever disarms.
     void request(int id, std::uint64_t cycles);
     void cancel(int id) { request(id, kNever); }
-    bool armed(int id) const noexcept {
-        return events_[static_cast<std::size_t>(id)].deadline != kNever;
-    }
-    std::uint64_t deadline(int id) const noexcept {
-        return events_[static_cast<std::size_t>(id)].deadline;
-    }
+    bool armed(int id) const noexcept { return deadlines_[static_cast<std::size_t>(id)] != kNever; }
+    std::uint64_t deadline(int id) const noexcept { return deadlines_[static_cast<std::size_t>(id)]; }
 
     std::uint64_t now() const noexcept { return now_; }
     std::uint64_t next_deadline() const noexcept;  // kNever when nothing is armed
@@ -53,11 +49,14 @@ private:
     struct Event {
         std::string name;
         Callback cb;
-        std::uint64_t deadline = kNever;
         Stat stat;
     };
     int depth_ = 0;
     std::vector<Event> events_;
+    // Deadlines apart from the events (dreamcomp): the earliest-deadline scan runs for every event
+    // fired (~80 000 a second) and touched a whole Event -- string, std::function, stats -- per
+    // entry for one number. Same order: ties still go to the lowest id.
+    std::vector<std::uint64_t> deadlines_;
     std::uint64_t now_ = 0;
 };
 
