@@ -51,8 +51,9 @@ the untextured word 0x00000000) pulled the game's full-screen fade quad into the
 chained it with everything into one outline covering the screen; a click on it created a
 whole-screen override, and every later click on a piece with those textures cycled that same
 entry. Fixes: overrides skip pieces wider than `full_width` unless `full=1`; the editor refuses to
-create a new override from an outline wider than 600 or over half the screen (status line says
-why; Reset still works). Verified: the VS screen shows separate outlines (portraits, VS, STAGE 1);
+create a new override from an outline wider than the rule's `full_width` (status line says why;
+Reset still works). It first also refused anything over half the screen's area; that blocked a real
+486x484 element in Jet Grind Radio (57 refused clicks in Daniel's session), so area no longer counts. Verified: the VS screen shows separate outlines (portraits, VS, STAGE 1);
 unit checks for `full`.
 
 ## How a primitive is classified

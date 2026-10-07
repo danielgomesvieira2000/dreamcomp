@@ -585,11 +585,13 @@ public:
     }
     // The player's override for `box`: the one that decided it if that is the player's, else a
     // new one covering the element (2 px of slack) and its textures.
-    // An element this large is a grouping accident (pieces chained across the screen), not one
-    // HUD element: a new override from it would catch everything with its textures everywhere.
+    // An element wider than the rule's full_width spans the screen: a grouping accident (pieces
+    // chained across it), and a new override from it would catch everything with its textures
+    // everywhere. Large but narrower elements are real (Jet Grind Radio: a 486x484 picture Daniel
+    // could not edit when the guard also refused anything over half the screen's area).
     static bool too_large(const hud::Box& box) {
-        const float w = box.ox1 - box.ox0, h = box.oy1 - box.oy0;
-        return w > 600.0f || w * h > 0.5f * 640.0f * 480.0f;
+        const float full = g_port ? g_port->hud.full_width : 600.0f;
+        return box.ox1 - box.ox0 > full;
     }
     hud::Override& user_override_for(const hud::Box& box) {
         const int port_n = static_cast<int>(hud_port_overrides_.items.size());
