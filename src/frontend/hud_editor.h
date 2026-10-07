@@ -63,6 +63,13 @@ private:
     float fx_ = 0, fy_ = 0, fw_ = 0, fh_ = 0;
     int corner_ = 2;  // the panel: 0 top left, 1 top right, 2 bottom left, 3 bottom right
     void place_panel();
+    // The panel dragged with the mouse (by any part but its buttons): its top-left corner in
+    // context pixels once moved (dragged_), the grab offset while dragging.
+    bool dragging_ = false, dragged_ = false;
+    float panel_x_ = 0, panel_y_ = 0, grab_x_ = 0, grab_y_ = 0, mouse_x_ = 0, mouse_y_ = 0;
+    bool paused_ = false;
+    void set_paused(bool on);
+    void show_pause();
 };
 
 }  // namespace dreamcomp::frontend

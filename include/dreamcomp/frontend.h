@@ -56,6 +56,9 @@ struct OverlayContext {
     std::function<bool(hud::Snapshot&)> hud_snapshot;
     std::function<void(const hud::Box&, hud::Edit)> hud_edit;
     std::function<void()> hud_save;
+    // Holds the game still (true) or lets it run (false), so the HUD on screen can be edited; the
+    // still frame is redrawn with each change. Any thread.
+    std::function<void(bool)> hud_pause;
 };
 
 class Overlay {
@@ -75,6 +78,8 @@ public:
     // Each vblank: runs what the menu asked of the game, and times the test script
     // (DREAMCOMP_OVERLAY_KEYS).
     void on_vblank(std::uint64_t frame);
+    // While the game is paused: runs what the menu asked of the game (edits, saving).
+    void on_paused_tick();
 
     struct Impl;
 

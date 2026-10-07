@@ -16,8 +16,9 @@ element's texture words, and an anchor: left, center, right, stretch (left alone
 2. Outlines show every element: **L** blue / **C** green / **R** red / **S** yellow (stretched),
    `*` = overridden. Grey outlines are 2D pieces the correction left alone.
 3. Left click cycles left > centre > right > stretched; right click goes back to automatic; a
-   click on a grey outline adds that piece to the HUD. **P** moves the panel, **S** saves,
-   **F1/Esc** closes.
+   click on a grey outline adds that piece to the HUD. **Space** pauses the game (a HUD that is
+   only briefly on screen stays put; edits redraw the still frame), drag the panel to move it
+   (**P**: next corner), **S** saves, **F1/Esc** closes (and resumes).
 4. Saved to `<settings dir>/hud_overrides.ini` (Windows: `%APPDATA%/dreamcomp/<id>/`).
 
 ## Making it permanent (you)

@@ -59,7 +59,7 @@ struct Snapshot {
     std::vector<Box> boxes;
     float image_aspect = 4.0f / 3.0f;  // the picture's shape (the 640x480 space spans it)
     bool edges = true;                 // HUD layout: anchored to edges (else centred 4:3)
-    std::uint64_t frame = 0;
+    std::uint64_t frame = 0;  // a new number per snapshot (also while the game is paused)
     // Filled by the host (Core) for the editor's panel.
     std::size_t port_overrides = 0, user_overrides = 0;
     bool unsaved = false;

@@ -138,7 +138,7 @@ over 20 ms 48 -> 4 after moving RmlUi off the game thread (the rest: first open,
 | Variable | Where | Effect |
 |---|---|---|
 | `DREAMCOMP_LAUNCHER_KEYS="down,enter,pad:a,click:<id>,shot:<png>,..."` | launcher window | scripted input through the real handlers, 150 ms apart; quits 1.5 s after the last |
-| `DREAMCOMP_OVERLAY_KEYS="@FRAME,esc,wait,shot:<png>,pad:rb,click:<id>,..."` | in game | from guest frame FRAME, pushes SDL events into the window's queue (same path as real input); `shot:` writes the composited frame |
+| `DREAMCOMP_OVERLAY_KEYS="@FRAME,esc,wait,shot:<png>,pad:rb,click:<id>,drag:<id>:<dx>:<dy>,space,..."` | in game | from guest frame FRAME, pushes SDL events into the window's queue (same path as real input); `shot:` writes the composited frame; `drag:` presses 20 px inside the element's top-left corner and releases dx, dy context pixels away (the HUD editor's panel: `drag:panel:600:-250`). Note: a `shot:` right after a click once showed a different 3D frame than later shots of the same pause (test path only; unexplained) |
 | `DREAMCOMP_LAUNCHER_DRAFT="scale=4;mods=a,b"`, `DREAMCOMP_LAUNCHER_PADS="Name;Name"`, `DREAMCOMP_LAUNCHER_FOCUS=<id>` | screenshots | unapplied values, stand-in pads, focus |
 | `DREAMCOMP_OVERLAY_PROFILE=1` | in game | composite / render times every 2 s |
 

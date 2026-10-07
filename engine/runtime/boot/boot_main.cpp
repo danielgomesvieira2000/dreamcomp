@@ -795,7 +795,10 @@ struct Live {
             rearm_escape = false;
             window.set_escape_quits(overlays.empty());  // an overlay owns escape (dreamcomp)
         }
-        if (window.pressed(Control::Menu)) {
+        // dreamcomp: an overlay host has its own controls screen and gives F1 to the HUD editor.
+        // The key is polled here, not taken from the event the overlay consumed, so it has to be
+        // refused here as well.
+        if (window.pressed(Control::Menu) && overlays.empty()) {
             if (menu.is_open())
                 close_menu();
             else
@@ -2464,6 +2467,32 @@ int main(int argc, char** argv) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(8));
                 }
                 due = {};  // start the clock again from now
+                sync.target = {};
+            }
+            // An extension's pause (dreamcomp: the HUD editor holds a HUD on screen while it is
+            // edited). The last display list is drawn again each pass, so changes an extension
+            // makes in on_frame() show on the still picture.
+            auto ext_paused = [] {
+                for (auto* e : dream::host::extensions())
+                    if (e->guest_paused())
+                        return true;
+                return false;
+            };
+            if (ext_paused()) {
+                std::printf("paused by an extension at frame %llu\n",
+                            static_cast<unsigned long long>(sys.spg.frames()));
+                while (ext_paused()) {
+                    for (auto* e : dream::host::extensions()) e->on_paused_tick();
+                    if (!live->last_stream.empty()) {
+                        const std::vector<std::uint32_t> stream = live->last_stream;
+                        live->render(stream);
+                    }
+                    if (!live->present(sys.spg.frames(), sys.ctx.cycles))
+                        throw StopRun{"the window was closed"};
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                }
+                std::printf("resumed\n");
+                due = {};
                 sync.target = {};
             }
             // Pads are read after the pacing sleep (dreamcomp), right before the guest runs the

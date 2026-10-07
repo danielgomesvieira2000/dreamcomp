@@ -506,16 +506,28 @@ struct Overlay::Impl {
             need_render = true;
             return;
         }
-        if (k.rfind("click:", 0) == 0) {
+        // click:<id>, or drag:<id>:<dx>:<dy> -- press near the element's top-left corner and
+        // move by dx, dy context pixels before releasing.
+        const bool drag = k.rfind("drag:", 0) == 0;
+        if (k.rfind("click:", 0) == 0 || drag) {
+            std::string id = k.substr(drag ? 5 : 6);
+            float ddx = 0, ddy = 0;
+            if (drag) {
+                const auto c1 = id.find(':');
+                if (c1 == std::string::npos)
+                    return;
+                std::sscanf(id.c_str() + c1 + 1, "%f:%f", &ddx, &ddy);
+                id.resize(c1);
+            }
             Rml::Element* el = !showing ? nullptr
-                               : hud_mode.load() && hud ? hud->element(k.substr(6))
-                                                        : ui->element(k.substr(6));
+                               : hud_mode.load() && hud ? hud->element(id)
+                                                        : ui->element(id);
             if (!el || draw_w <= 0)
                 return;
             const Rml::Vector2f pos = el->GetAbsoluteOffset(Rml::BoxArea::Border);
             const Rml::Vector2f size = el->GetBox().GetSize(Rml::BoxArea::Border);
-            const float fx = static_cast<float>(vis_x) + pos.x + size.x * 0.5f;
-            const float fy = static_cast<float>(vis_y) + pos.y + size.y * 0.5f;
+            const float fx = static_cast<float>(vis_x) + pos.x + (drag ? 20.0f : size.x * 0.5f);
+            const float fy = static_cast<float>(vis_y) + pos.y + (drag ? 20.0f : size.y * 0.5f);
             SDL_Window* win = SDL_GetKeyboardFocus();
             if (!win) {
                 int n = 0;
@@ -536,6 +548,14 @@ struct Overlay::Impl {
             e.button.button = SDL_BUTTON_LEFT;
             e.button.down = true;
             SDL_PushEvent(&e);
+            if (drag) {
+                SDL_Event m{};
+                m.type = SDL_EVENT_MOUSE_MOTION;
+                m.motion.windowID = win ? SDL_GetWindowID(win) : 0;
+                m.motion.x = (draw_x + (fx + ddx) / static_cast<float>(fw) * draw_w) / d;
+                m.motion.y = (draw_y + (fy + ddy) / static_cast<float>(fh) * draw_h) / d;
+                SDL_PushEvent(&m);
+            }
             e.type = SDL_EVENT_MOUSE_BUTTON_UP;
             e.button.down = false;
             SDL_PushEvent(&e);
@@ -701,5 +721,6 @@ const std::uint32_t* Overlay::render_window(unsigned view_w, unsigned view_h, bo
     return impl_->render_window(view_w, view_h, changed);
 }
 void Overlay::on_vblank(std::uint64_t frame) { impl_->on_vblank(frame); }
+void Overlay::on_paused_tick() { impl_->run_guest_actions(); }
 
 }  // namespace dreamcomp::frontend

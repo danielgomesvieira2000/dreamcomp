@@ -65,6 +65,12 @@ public:
         return false;
     }
     virtual bool overlay_open() { return false; }
+    // dreamcomp: true holds the guest at its next vblank until it turns false again -- the clock,
+    // sound and game logic stop. Meanwhile the last display list is drawn again every pass (so
+    // on_frame() changes show on the still picture), the window keeps presenting, and
+    // on_paused_tick() runs on the guest thread for work that would otherwise wait for a vblank.
+    virtual bool guest_paused() { return false; }
+    virtual void on_paused_tick() {}
     // The overlay as an image of the window's size (premultiplied RGBA, red in the low byte),
     // blended over the game on the GPU: the game frame never has to come back to the CPU.
     // `changed` says whether it differs from the last call, so it is uploaded only then.

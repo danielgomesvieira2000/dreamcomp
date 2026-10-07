@@ -550,7 +550,7 @@ public:
         if (!watching)
             return;
         snap.image_aspect = widescreen() ? target_aspect() : 4.0f / 3.0f;
-        snap.frame = vblanks_;
+        snap.frame = ++hud_snap_seq_;  // not vblanks_: a paused game redraws without a vblank
         snap.port_overrides = hud_port_overrides_.items.size();
         snap.user_overrides = hud_user_overrides_.items.size();
         snap.unsaved = hud_unsaved_;
@@ -670,6 +670,7 @@ public:
             };
             oc.hud_edit = [this](const hud::Box& box, hud::Edit edit) { hud_edit(box, edit); };
             oc.hud_save = [this] { hud_save(); };
+            oc.hud_pause = [this](bool on) { hud_paused_ = on; };
             overlay_ = std::make_unique<frontend::Overlay>(oc);
         }
         return true;
@@ -680,6 +681,13 @@ public:
 #ifdef DREAMCOMP_WITH_FRONTEND
     bool on_event(const void* ev) override { return overlay_ && overlay_->on_event(ev); }
     bool overlay_open() override { return overlay_ && overlay_->is_open(); }
+    // The HUD editor's pause (P key / Pause button): the game holds at its vblank and the last
+    // frame is redrawn with each HUD change (host_ext.h guest_paused).
+    bool guest_paused() override { return hud_paused_.load(std::memory_order_relaxed); }
+    void on_paused_tick() override {
+        if (overlay_)
+            overlay_->on_paused_tick();
+    }
     const std::uint32_t* overlay_image(unsigned vw, unsigned vh, bool& changed) override {
 #ifdef DREAMCOMP_WITH_FRONTEND
         if (overlay_)
@@ -775,6 +783,8 @@ private:
     bool hud_unsaved_ = false;
     std::string hud_status_;
     std::atomic<bool> hud_watch_{false};
+    std::atomic<bool> hud_paused_{false};
+    std::uint64_t hud_snap_seq_ = 0;
     std::mutex hud_mutex_;  // hud_snapshot_ for the overlay thread
     hud::Snapshot hud_snapshot_;
     bool hud_snapshot_ready_ = false;
