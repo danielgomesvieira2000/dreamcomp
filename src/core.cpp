@@ -650,6 +650,37 @@ public:
         hud_unsaved_ = true;
         rebuild_hud_overrides();
     }
+    // The F2 list: an anchor chosen from a dropdown rather than cycled by clicks.
+    void hud_set(const hud::Box& box, const std::string& value) {
+        using hud::Anchor;
+        const int port_n = static_cast<int>(hud_port_overrides_.items.size());
+        if (value == "none")
+            return;  // a grey piece left out of the HUD: nothing to record
+        if (value == "auto" && box.hud) {
+            if (box.override_index < 0) {
+                hud_status_ = "already automatic";
+                return;
+            }
+            hud_edit(box, hud::Edit::Reset);
+            return;
+        }
+        Anchor a = Anchor::Auto;
+        if (value != "auto" && !hud::parse(value, a))
+            return;
+        if (box.override_index < port_n && too_large(box)) {
+            hud_status_ = "this outline spans the screen: it is several elements chained together";
+            std::printf("hud editor: refused an override over %.0f,%.0f-%.0f,%.0f (too large)\n",
+                        box.ox0, box.oy0, box.ox1, box.oy1);
+            return;
+        }
+        user_override_for(box).anchor = a;
+        hud_status_ = std::string(box.hud ? "element set to " : "piece added: ") + hud::name(a);
+        std::printf("hud editor: set %s at %.0f,%.0f-%.0f,%.0f\n", hud::name(a), box.ox0, box.oy0,
+                    box.ox1, box.oy1);
+        hud_unsaved_ = true;
+        rebuild_hud_overrides();
+    }
+
     void hud_save() {
         std::string err;
         if (hud_user_overrides_.save(hud_user_file_, &err)) {
@@ -690,6 +721,7 @@ public:
             oc.hud_edit = [this](const hud::Box& box, hud::Edit edit) { hud_edit(box, edit); };
             oc.hud_save = [this] { hud_save(); };
             oc.hud_pause = [this](bool on) { hud_paused_ = on; };
+            oc.hud_set = [this](const hud::Box& box, const std::string& v) { hud_set(box, v); };
             overlay_ = std::make_unique<frontend::Overlay>(oc);
         }
         return true;

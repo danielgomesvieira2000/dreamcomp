@@ -1732,6 +1732,7 @@ bool MenuUi::script_event(const std::string& k, SDL_Event& e) {
                              : k == "enter" ? SDLK_RETURN
                              : k == "esc"   ? SDLK_ESCAPE
                              : k == "f1"    ? SDLK_F1
+                             : k == "f2"    ? SDLK_F2
                              : k == "s"     ? SDLK_S
                              : k == "p"     ? SDLK_P
                              : k == "tab"   ? SDLK_TAB

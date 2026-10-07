@@ -125,6 +125,7 @@ struct Overlay::Impl {
     std::string pending_shot;
     std::atomic<bool> open{false};
     std::atomic<bool> hud_mode{false};  // the HUD editor (F1) rather than the menu
+    std::atomic<bool> hud_list{false};  // opened with F2: the list of elements with dropdowns
 
     // ---- game thread only ------------------------------------------------------------------------
     Image shown;
@@ -213,7 +214,7 @@ struct Overlay::Impl {
             const std::uint64_t frame = vblank_frame;
             lock.unlock();
             if (do_hud)
-                open_hud();
+                open_hud(hud_list.load());
             work(evs, do_open, mode, frame);
             lock.lock();
         }
@@ -238,8 +239,9 @@ struct Overlay::Impl {
             };
             if (hud_mode.load()) {
                 hud->handle(ev, mouse);
-            } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F1 && !ev.key.repeat) {
-                open_hud();  // from the menu straight to the HUD editor
+            } else if (ev.type == SDL_EVENT_KEY_DOWN && (ev.key.key == SDLK_F1 || ev.key.key == SDLK_F2) &&
+                       !ev.key.repeat) {
+                open_hud(ev.key.key == SDLK_F2);  // from the menu straight to the HUD editor
             } else if (ui->handle(ev, mouse)) {
                 need_render = true;
             }
@@ -362,8 +364,9 @@ struct Overlay::Impl {
         return true;
     }
 
-    // The HUD editor (F1): the menu's page hidden, the editor's shown, over the running game.
-    void open_hud() {
+    // The HUD editor (F1 outlines, F2 the list): the menu's page hidden, the editor's shown, over
+    // the running game.
+    void open_hud(bool list = false) {
         if (!init() || !hud) {
             open = false;
             hud_mode = false;
@@ -372,7 +375,7 @@ struct Overlay::Impl {
         open = true;
         hud_mode = true;
         ui->set_visible(false);
-        hud->show();
+        hud->show(list);
         need_render = true;
         laid_out = DrawMode{};
         std::printf("overlay: HUD editor open\n");
@@ -506,6 +509,14 @@ struct Overlay::Impl {
             need_render = true;
             return;
         }
+        // select:<id>:<value> -- a dropdown set as if chosen (the HUD editor's F2 list).
+        if (k.rfind("select:", 0) == 0) {
+            const std::string rest = k.substr(7);
+            const auto c = rest.find(':');
+            if (c != std::string::npos && showing && hud_mode.load() && hud)
+                hud->choose(rest.substr(0, c), rest.substr(c + 1));
+            return;
+        }
         // click:<id>, or drag:<id>:<dx>:<dy> -- press near the element's top-left corner and
         // move by dx, dy context pixels before releasing.
         const bool drag = k.rfind("drag:", 0) == 0;
@@ -581,10 +592,12 @@ struct Overlay::Impl {
 
     // ---- game thread -----------------------------------------------------------------------------
     bool on_event(const SDL_Event& ev) {
-        if (!open.load() && ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F1 && !ev.key.repeat) {
+        if (!open.load() && ev.type == SDL_EVENT_KEY_DOWN && (ev.key.key == SDLK_F1 || ev.key.key == SDLK_F2) &&
+            !ev.key.repeat) {
+            hud_list = ev.key.key == SDLK_F2;
             // F1: the HUD editor (it used to be the engine's binding screen; the Controls tab
             // edits bindings now). Consumed, so the engine never sees it.
-            std::printf("overlay: HUD editor opened by F1\n");
+            std::printf("overlay: HUD editor opened by %s\n", hud_list.load() ? "F2 (list)" : "F1");
             open = true;
             shown = Image{};
             {

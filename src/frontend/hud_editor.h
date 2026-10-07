@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "dreamcomp/frontend.h"
 #include "dreamcomp/hud.h"
@@ -24,7 +25,7 @@ public:
     ~HudEditor() override;
 
     bool load(Rml::Context* ctx, std::string* error);
-    void show();
+    void show(bool list = false);  // list: F2, the elements as rows with an anchor dropdown
     void hide();
     bool visible() const noexcept { return visible_; }
 
@@ -43,6 +44,8 @@ public:
     }
 
     void ProcessEvent(Rml::Event& ev) override;
+    // A dropdown in the list set to `value`, as if chosen with the mouse (scripted tests).
+    void choose(const std::string& select_id, const std::string& value);
     Rml::Element* element(const std::string& id) const { return doc_ ? doc_->GetElementById(id) : nullptr; }
 
 private:
@@ -68,6 +71,16 @@ private:
     bool dragging_ = false, dragged_ = false;
     float panel_x_ = 0, panel_y_ = 0, grab_x_ = 0, grab_y_ = 0, mouse_x_ = 0, mouse_y_ = 0;
     bool paused_ = false;
+    // F2 list: one row per element (HUD first, then grey pieces), the boxes they stood for when
+    // the rows were built, and a signature so rows are rebuilt only when the elements change (a
+    // rebuild would close an open dropdown).
+    bool list_mode_ = false;
+    std::vector<hud::Box> list_boxes_;
+    std::vector<std::string> list_values_;
+    std::string list_sig_;
+    int list_hl_ = -1;
+    void rebuild_list(const std::vector<std::size_t>& list_of_box);
+    void highlight(int li);
     void set_paused(bool on);
     void show_pause();
 };

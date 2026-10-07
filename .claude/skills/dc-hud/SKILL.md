@@ -19,6 +19,8 @@ element's texture words, and an anchor: left, center, right, stretch (left alone
    click on a grey outline adds that piece to the HUD. **Space** pauses the game (a HUD that is
    only briefly on screen stays put; edits redraw the still frame), drag the panel to move it
    (**P**: next corner), **S** saves, **F1/Esc** closes (and resumes).
+   **F2** opens the same editor as a list: each element with a dropdown for its anchor (no
+   clicking on small outlines); hovering a row outlines its element; it pauses the game itself.
 4. Saved to `<settings dir>/hud_overrides.ini` (Windows: `%APPDATA%/dreamcomp/<id>/`).
 
 ## Making it permanent (you)
@@ -49,6 +51,8 @@ python tools/hud_promote.py <slug>                # merge into ports/<slug>-reco
 DREAMCOMP_OVERLAY_KEYS="@2300,f1,wait,wait,wait,shot:a.png,click:hud-0,wait,wait,wait,wait,wait,wait,shot:b.png,s,wait,f1"
 ```
 through `scenario.py --env` (fight scenario): outlines are `hud-N` / `piece-N` in drawing order.
+F2 list: `...,f2,wait,wait,select:sel-0:center,...` sets row 0's dropdown (rows `row-N`, dropdowns
+`sel-N`, values auto/left/center/right/stretch/none).
 An edit shows after about a second (vblank hand-over + snapshot refresh): wait before the shot.
 Unit tests: target `dreamcomp_hud_tests` (`<build>/dreamcomp/dreamcomp_hud_tests <scratch dir>`).
 

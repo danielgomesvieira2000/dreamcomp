@@ -22,7 +22,8 @@ style, reproduced in dreamcomp's own RML/RCSS; none of RecompFrontend's files ar
 In game: **Escape** or a pad's **Select/Back** opens and closes the panel (on the tab used last,
 General at first). **The game keeps running**; while the panel is open the keyboard and pads drive
 the panel and the game sees its buttons released. Start stays the game's. **F1** opens the HUD
-editor (docs/HUD.md: per-element anchors over the running game) in the same overlay; it no longer
+editor (docs/HUD.md: per-element anchors over the running game) in the same overlay, **F2** the
+same editor as a list with an anchor dropdown per element; it no longer
 opens the engine's binding screen. Escape no longer quits; Quit Game (confirmed) or closing the window does,
 through the normal stop path (report, settings, memory card). `DREAMCOMP_NO_OVERLAY=1` turns the
 in-game panel off.
@@ -138,7 +139,7 @@ over 20 ms 48 -> 4 after moving RmlUi off the game thread (the rest: first open,
 | Variable | Where | Effect |
 |---|---|---|
 | `DREAMCOMP_LAUNCHER_KEYS="down,enter,pad:a,click:<id>,shot:<png>,..."` | launcher window | scripted input through the real handlers, 150 ms apart; quits 1.5 s after the last |
-| `DREAMCOMP_OVERLAY_KEYS="@FRAME,esc,wait,shot:<png>,pad:rb,click:<id>,drag:<id>:<dx>:<dy>,space,..."` | in game | from guest frame FRAME, pushes SDL events into the window's queue (same path as real input); `shot:` writes the composited frame; `drag:` presses 20 px inside the element's top-left corner and releases dx, dy context pixels away (the HUD editor's panel: `drag:panel:600:-250`). Note: a `shot:` right after a click once showed a different 3D frame than later shots of the same pause (test path only; unexplained) |
+| `DREAMCOMP_OVERLAY_KEYS="@FRAME,esc,wait,shot:<png>,pad:rb,click:<id>,drag:<id>:<dx>:<dy>,space,..."` | in game | from guest frame FRAME, pushes SDL events into the window's queue (same path as real input); `shot:` writes the composited frame; `select:<id>:<value>` sets a dropdown as if chosen (HUD list `sel-N`); keys include `f1`, `f2`; `drag:` presses 20 px inside the element's top-left corner and releases dx, dy context pixels away (the HUD editor's panel: `drag:panel:600:-250`). Note: a `shot:` right after a click once showed a different 3D frame than later shots of the same pause (test path only; unexplained) |
 | `DREAMCOMP_LAUNCHER_DRAFT="scale=4;mods=a,b"`, `DREAMCOMP_LAUNCHER_PADS="Name;Name"`, `DREAMCOMP_LAUNCHER_FOCUS=<id>` | screenshots | unapplied values, stand-in pads, focus |
 | `DREAMCOMP_OVERLAY_PROFILE=1` | in game | composite / render times every 2 s |
 

@@ -59,6 +59,10 @@ struct OverlayContext {
     // Holds the game still (true) or lets it run (false), so the HUD on screen can be edited; the
     // still frame is redrawn with each change. Any thread.
     std::function<void(bool)> hud_pause;
+    // The F2 list's dropdown (game thread, posted): "auto" (back to automatic, or add a grey piece
+    // with an automatic anchor), "left", "center", "right", "stretch", "none" (a grey piece stays
+    // out of the HUD).
+    std::function<void(const hud::Box&, const std::string&)> hud_set;
 };
 
 class Overlay {
