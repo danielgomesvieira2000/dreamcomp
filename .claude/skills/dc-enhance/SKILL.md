@@ -33,6 +33,13 @@ Copy mechanisms literally between ports; **re-measure findings** on each game.
 
 ## 3. Verify on the picture
 
+Widescreen, before calling it done (T23): the player sits where he does in the 4:3 shot of the same
+frame (centred), and `ta_dump` polygon counts per tenth of the screen fall off smoothly on both
+sides (a cliff on one side is a cull limit). Dump the game's screen/projection block at 4:3 and at
+the wide shape: every field that changed besides the ones you patched is derived, and may need
+re-asserting.
+
+
 `dc.py shots` before/after on the same frames and press script, in the condition the
 enhancement affects (gameplay, not only menus). Long run (`dc.py report --frames 3600+`) with the
 enhancement on: it must not fault -- RAM patches have crashed games when written at the wrong time.
