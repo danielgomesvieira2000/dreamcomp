@@ -28,7 +28,7 @@ void sprite(dream::render::Frame& f, float x0, float y0, float x1, float y1, flo
     dream::render::Polygon p;
     p.first = static_cast<std::uint32_t>(f.vertices.size());
     p.count = 4;
-    p.pcw = type << 29;
+    p.pcw = (type << 29) | 0x8u;  // textured: the texture word counts for overrides
     p.tcw = tcw;
     for (auto [x, y] : {std::pair{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}}) {
         dream::render::Vertex v;
@@ -184,6 +184,36 @@ int main(int argc, char** argv) {
         CHECK(ov.save(file, &err));
         hud::Overrides back;
         CHECK(back.load(file, &err) && back.items.size() == 1 && back.items[0].full);
+    }
+
+    // An untextured piece matches an override saved with 0, whatever its TCW slot holds (it
+    // changes every frame in Jet Grind Radio).
+    {
+        hud::Overrides ov;
+        hud::Override o;
+        o.x0 = 430; o.y0 = 320; o.x1 = 460; o.y1 = 360; o.tcws = {0}; o.anchor = hud::Anchor::Center;
+        ov.items = {o};
+        for (std::uint32_t junk : {0x3cbaef63u, 0x3cbae343u}) {
+            dream::render::Frame f;
+            sprite(f, 440, 334, 452, 354, 0.5f, junk, 4);
+            f.lists[4][0].pcw &= ~0x8u;  // untextured
+            hud::Snapshot snap;
+            hud::Stats st;
+            hud::correct(f, rule, aspect, true, true, ov, &snap, st);
+            CHECK(snap.pieces.size() == 1 && snap.pieces[0].override_index == 0);
+        }
+    }
+
+    // A word saved from an untextured piece (float data, pixel format 7) loads as 0.
+    {
+        const auto file = dir / "floatword.ini";
+        FILE* fp = std::fopen(file.string().c_str(), "w");
+        std::fputs("rect=1,2,3,4 anchor=center tcw=0x3f800000,0x3cbaef63,0x500e79a4\n", fp);
+        std::fclose(fp);
+        hud::Overrides ov;
+        std::string err;
+        CHECK(ov.load(file, &err) && ov.items.size() == 1);
+        CHECK(ov.items[0].tcws.size() == 2 && ov.items[0].tcws[0] == 0u && ov.items[0].tcws[1] == 0x500e79a4u);
     }
 
     // Sharp 2D: a 12x24 glyph quad mapping 12x24 texels of a 512x512 texture, bilinear.

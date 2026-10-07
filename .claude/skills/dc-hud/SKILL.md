@@ -19,8 +19,9 @@ element's texture words, and an anchor: left, center, right, stretch (left alone
    click on a grey outline adds that piece to the HUD. **Space** pauses the game (a HUD that is
    only briefly on screen stays put; edits redraw the still frame), drag the panel to move it
    (**P**: next corner), **S** saves, **F1/Esc** closes (and resumes).
-   **F2** opens the same editor as a list: each element with a dropdown for its anchor (no
-   clicking on small outlines); hovering a row outlines its element; it pauses the game itself.
+   **F2** opens the same editor as a list of individual pieces (not the F1 groups), each with a
+   dropdown for its anchor; hovering a row frames that piece; it pauses the game itself. A piece
+   anchored on its own leaves its group.
 4. Saved to `<settings dir>/hud_overrides.ini` (Windows: `%APPDATA%/dreamcomp/<id>/`).
 
 ## Making it permanent (you)

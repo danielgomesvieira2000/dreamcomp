@@ -13,6 +13,12 @@
 
 namespace dreamcomp::hud {
 
+namespace {
+// A word saved before untextured pieces were told apart: a TCW whose pixel format field is 7
+// (reserved) is never a texture -- it is float data such as 0x3F800000 (1.0) -- so it is read as 0.
+std::uint32_t clean_word(std::uint32_t w) { return ((w >> 27) & 7u) == 7u ? 0u : w; }
+}  // namespace
+
 const char* name(Anchor a) noexcept {
     switch (a) {
         case Anchor::Left: return "left";
@@ -78,8 +84,12 @@ bool Overrides::load(const std::filesystem::path& file, std::string* error) {
                 std::istringstream list(value);
                 std::string t;
                 while (std::getline(list, t, ','))
-                    if (!t.empty())
-                        o.tcws.push_back(static_cast<std::uint32_t>(std::strtoul(t.c_str(), nullptr, 0)));
+                    if (!t.empty()) {
+                        const std::uint32_t w =
+                            clean_word(static_cast<std::uint32_t>(std::strtoul(t.c_str(), nullptr, 0)));
+                        if (std::find(o.tcws.begin(), o.tcws.end(), w) == o.tcws.end())
+                            o.tcws.push_back(w);
+                    }
             } else if (key == "full") {
                 o.full = value == "1" || value == "true";
             } else {
@@ -144,6 +154,10 @@ bool Overrides::save(const std::filesystem::path& file, std::string* error) cons
 }
 
 namespace {
+
+// The texture word an override compares: the TCW of a textured polygon, 0 for an untextured one
+// (whose TCW slot is leftover data).
+std::uint32_t texture_word(const dream::render::Polygon& p) { return (p.pcw & 0x8u) ? p.tcw : 0u; }
 
 struct Item {
     const dream::render::Polygon* poly;
@@ -236,7 +250,7 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 continue;
             float x0, x1, y0, y1;
             rect(p, x0, x1, y0, y1);
-            const int m = any_overrides ? overrides.match(0.5f * (x0 + x1), 0.5f * (y0 + y1), p.tcw,
+            const int m = any_overrides ? overrides.match(0.5f * (x0 + x1), 0.5f * (y0 + y1), texture_word(p),
                                                           x1 - x0 > rule.full_width)
                                         : -1;
             if (m >= 0) {
@@ -258,7 +272,7 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                         b.anchor = Anchor::Stretch;
                         b.hud = true;
                         b.override_index = m;
-                        add_tcw(b.tcws, p.tcw);
+                        add_tcw(b.tcws, texture_word(p));
                     }
                     continue;
                 }
@@ -285,7 +299,7 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 b.y1 = b.oy1 = y1;
                 b.anchor = Anchor::Stretch;
                 b.hud = false;
-                b.tcws.push_back(p.tcw);
+                b.tcws.push_back(texture_word(p));
                 snapshot->boxes.push_back(std::move(b));
             }
         }
@@ -316,6 +330,10 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 const bool rows_overlap = a.y0 <= b.y1 && b.y0 <= a.y1;
                 const bool same_line = std::abs(a.y0 - b.y0) <= kSameRow && std::abs(a.y1 - b.y1) <= kSameRow;
                 const float line_gap = 1.5f * std::max(a.y1 - a.y0, b.y1 - b.y0);
+                // A piece with an override of its own (F2: one piece anchored on its own) is
+                // never grouped with pieces that have another one, or none.
+                if (a.override_index != b.override_index)
+                    continue;
                 if ((rows_overlap && gap <= kTouch) || (same_line && gap <= line_gap))
                     group[root(i)] = root(j);
             }
@@ -364,7 +382,22 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
             b.override_index = goverride[r];
             snapshot->boxes.push_back(std::move(b));
         }
-        add_tcw(snapshot->boxes[static_cast<std::size_t>(box_of[r])].tcws, p.tcw);
+        add_tcw(snapshot->boxes[static_cast<std::size_t>(box_of[r])].tcws, texture_word(p));
+        // The piece on its own, for the F2 list.
+        Box pc;
+        pc.ox0 = items[i].x0;
+        pc.ox1 = items[i].x1;
+        pc.oy0 = items[i].y0;
+        pc.oy1 = items[i].y1;
+        pc.x0 = anchor + (items[i].x0 - anchor) * k;
+        pc.x1 = anchor + (items[i].x1 - anchor) * k;
+        pc.y0 = items[i].y0;
+        pc.y1 = items[i].y1;
+        pc.anchor = resolved(anchor);
+        pc.hud = true;
+        pc.override_index = items[i].override_index;
+        pc.tcws.push_back(texture_word(p));
+        snapshot->pieces.push_back(std::move(pc));
     }
     if (snapshot) {
         for (auto& [m, b] : stretched) {

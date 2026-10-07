@@ -72,9 +72,39 @@ def parse(path):
             assert len(rect) == 4 and anchor in ANCHORS
         except (KeyError, ValueError, AssertionError):
             sys.exit(f"{path}:{n}: expected rect=x0,y0,x1,y1 anchor=... [tcw=...]: {line.strip()}")
-        tcws = tuple(sorted(int(t, 0) for t in fields.get("tcw", "").split(",") if t))
+        # A word whose pixel-format field is 7 is float data from an untextured piece, never a
+        # texture: it is saved as 0, which matches untextured pieces (docs/HUD.md).
+        tcws = tuple(sorted({clean(int(t, 0)) for t in fields.get("tcw", "").split(",") if t}))
         full = fields.get("full", "") in ("1", "true")
         out.append((rect, anchor, tcws, full))
+    return out
+
+
+def clean(w):
+    return 0 if (w >> 27) & 7 == 7 else w
+
+
+def overlap(a, b):
+    """Share of the smaller rectangle covered by the other."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    small = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return ix * iy / small if small > 0 else 0.0
+
+
+def merge(entries):
+    """One entry per piece: same anchor, textures and full flag, rectangles overlapping by half or
+    more -> their union (the same piece saved again a pixel apart)."""
+    out = []
+    for e in entries:
+        rect, anchor, tcws, full = e
+        for i, (r, an, t, fu) in enumerate(out):
+            if an == anchor and t == tcws and fu == full and overlap(r, rect) >= 0.5:
+                out[i] = ((min(r[0], rect[0]), min(r[1], rect[1]), max(r[2], rect[2]), max(r[3], rect[3])),
+                          an, t, fu)
+                break
+        else:
+            out.append(e)
     return out
 
 
@@ -117,7 +147,11 @@ def main():
         else:
             port.append(entry)
             added += 1
-    print(f"{src}: {len(user)} override(s) -> {dst}: {added} added, {updated} updated, {len(port)} in all")
+    before = len(port)
+    port = merge(port)
+    merged = before - len(port)
+    print(f"{src}: {len(user)} override(s) -> {dst}: {added} added, {updated} updated, "
+          f"{merged} merged as repeats, {len(port)} in all")
     for e in port:
         print("  " + fmt(e))
     if a.dry_run:

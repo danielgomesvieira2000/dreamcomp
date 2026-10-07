@@ -48,7 +48,7 @@ body { width: 100%; height: 100%; margin: 0; padding: 0; font-family: Inter; fon
 button { display: inline-block; padding: 4dp 14dp; margin-right: 8dp; border-width: 1px; border-color: #5a6a90;
          background-color: #1a2236; color: #e8ecf4; }
 button:hover { background-color: #2c3a5c; }
-#boxes .box.hl { border-width: 3px; border-color: #ffffff; background-color: #ffffff40; }
+#boxes .hlbox { display: none; pointer-events: none; border-width: 3px; border-color: #ffffff; background-color: #ffffff40; }
 #list { display: none; max-height: 300dp; overflow-y: auto; margin-top: 6dp; cursor: auto; }
 #list scrollbarvertical { width: 10dp; margin-left: 4dp; }
 #list scrollbarvertical slidertrack { background-color: #ffffff12; }
@@ -286,27 +286,6 @@ void HudEditor::rebuild() {
             return !A.hud;  // grey pieces below the HUD
         return (A.x1 - A.x0) * (A.y1 - A.y0) > (B.x1 - B.x0) * (B.y1 - B.y0);
     });
-    // The list's order: HUD elements top to bottom, left to right, then the grey pieces.
-    std::vector<std::size_t> list_order(snap_.boxes.size());
-    std::iota(list_order.begin(), list_order.end(), std::size_t{0});
-    std::sort(list_order.begin(), list_order.end(), [&](std::size_t a, std::size_t b) {
-        const auto& A = snap_.boxes[a];
-        const auto& B = snap_.boxes[b];
-        if (A.hud != B.hud)
-            return A.hud;
-        if (std::abs(A.oy0 - B.oy0) > 4.0f)
-            return A.oy0 < B.oy0;
-        return A.ox0 < B.ox0;
-    });
-    std::vector<int> li_of(snap_.boxes.size(), -1);
-    {
-        int li = 0;
-        for (std::size_t i : list_order) {
-            const hud::Box& b = snap_.boxes[i];
-            if (std::isfinite(b.x0) && std::isfinite(b.x1) && std::isfinite(b.y0) && std::isfinite(b.y1))
-                li_of[i] = li++;
-        }
-    }
     std::string rml;
     std::size_t hud_n = 0, piece_n = 0;
     for (std::size_t i : order) {
@@ -322,27 +301,48 @@ void HudEditor::rebuild() {
             ++hud_n;
             // Ids in drawing order, for scripted tests (DREAMCOMP_OVERLAY_KEYS=...,click:hud-0).
             rml += "<div id=\"hud-" + std::to_string(hud_n - 1) + "\" class=\"box hud " +
-                   std::string(hud::name(b.anchor)) + (li_of[i] == list_hl_ ? " hl" : "") +
-                   "\" data-li=\"" + std::to_string(li_of[i]) + "\" data-box=\"" + std::to_string(i) + "\" style=\"" +
+                   std::string(hud::name(b.anchor)) + "\" data-box=\"" + std::to_string(i) + "\" style=\"" +
                    fmt("left: %.0fpx; top: %.0fpx; width: %.0fpx; height: %.0fpx;", x, y, w, h) +
                    "\"><span class=\"tag\">" + letter(b.anchor) + (b.override_index >= 0 ? "*" : "") +
                    "</span></div>";
         } else {
             ++piece_n;
-            rml += "<div id=\"piece-" + std::to_string(piece_n - 1) + "\" class=\"box piece" +
-                   (li_of[i] == list_hl_ ? " hl" : "") + "\" data-li=\"" + std::to_string(li_of[i]) + "\" data-box=\"" +
+            rml += "<div id=\"piece-" + std::to_string(piece_n - 1) + "\" class=\"box piece\" data-box=\"" +
                    std::to_string(i) + "\" style=\"" +
                    fmt("left: %.0fpx; top: %.0fpx; width: %.0fpx; height: %.0fpx;", x, y, w, h) +
                    "\"></div>";
         }
     }
+    // The hover frame of the list (a single outline over the row's piece), drawn last.
+    rml += "<div id=\"hlbox\" class=\"box hlbox\"></div>";
     boxes->SetInnerRML(rml);
     if (list_mode_) {
-        std::vector<std::size_t> rows;
-        for (std::size_t i : list_order)
-            if (li_of[i] >= 0)
-                rows.push_back(i);
+        // Every piece on its own (Daniel: the F1 groups hide the individual elements): HUD pieces
+        // top to bottom, left to right, then the grey 2D pieces.
+        auto finite = [](const hud::Box& b) {
+            return std::isfinite(b.x0) && std::isfinite(b.x1) && std::isfinite(b.y0) && std::isfinite(b.y1);
+        };
+        std::vector<hud::Box> rows;
+        for (const hud::Box& b : snap_.pieces)
+            if (finite(b))
+                rows.push_back(b);
+        std::sort(rows.begin(), rows.end(), [](const hud::Box& A, const hud::Box& B) {
+            if (std::abs(A.oy0 - B.oy0) > 4.0f)
+                return A.oy0 < B.oy0;
+            return A.ox0 < B.ox0;
+        });
+        const std::size_t hud_rows = rows.size();
+        for (const hud::Box& b : snap_.boxes)
+            if (!b.hud && finite(b))
+                rows.push_back(b);
+        std::sort(rows.begin() + static_cast<std::ptrdiff_t>(hud_rows), rows.end(),
+                  [](const hud::Box& A, const hud::Box& B) {
+                      if (std::abs(A.oy0 - B.oy0) > 4.0f)
+                          return A.oy0 < B.oy0;
+                      return A.ox0 < B.ox0;
+                  });
         rebuild_list(rows);
+        place_highlight();
     }
     if (auto* e = doc_->GetElementById("legend"))
         e->SetInnerRML(std::string("<span class=\"l\">L</span> left, <span class=\"c\">C</span> centre, "
@@ -363,7 +363,7 @@ void HudEditor::rebuild() {
     redraw_ = true;
 }
 
-void HudEditor::rebuild_list(const std::vector<std::size_t>& rows) {
+void HudEditor::rebuild_list(const std::vector<hud::Box>& rows) {
     Rml::Element* list = doc_ ? doc_->GetElementById("list") : nullptr;
     if (!list)
         return;
@@ -375,10 +375,8 @@ void HudEditor::rebuild_list(const std::vector<std::size_t>& rows) {
         return hud::name(b.anchor);
     };
     std::string sig;
-    for (std::size_t i : rows) {
-        const hud::Box& b = snap_.boxes[i];
+    for (const hud::Box& b : rows)
         sig += fmt("%.0f,%.0f,%.0f,%.0f;", b.ox0, b.oy0, b.ox1, b.oy1) + value_of(b) + "|";
-    }
     if (sig == list_sig_)
         return;  // same elements, same anchors: keep the rows (and any open dropdown)
     list_sig_ = sig;
@@ -386,13 +384,13 @@ void HudEditor::rebuild_list(const std::vector<std::size_t>& rows) {
     list_values_.clear();
     std::string rml;
     for (std::size_t r = 0; r < rows.size(); ++r) {
-        const hud::Box& b = snap_.boxes[rows[r]];
+        const hud::Box& b = rows[r];
         const std::string v = value_of(b);
         list_boxes_.push_back(b);
         list_values_.push_back(v);
         const std::string n = std::to_string(r);
         const std::string label =
-            (b.hud ? std::string("HUD ") : std::string("piece ")) + "#" + n + "  " +
+            (b.hud ? std::string("HUD ") : std::string("2D ")) + "#" + n + "  " +
             fmt("%.0f,%.0f  %.0f x %.0f", b.ox0, b.oy0, b.ox1 - b.ox0, b.oy1 - b.oy0) +
             (b.override_index >= 0 ? "  *" : "");
         auto opt = [&](const char* val, const std::string& text) {
@@ -415,19 +413,31 @@ void HudEditor::rebuild_list(const std::vector<std::size_t>& rows) {
     redraw_ = true;
 }
 
-// Outlines the element of list row `li` (the row under the mouse), so it can be found on screen.
+// Outlines the piece of list row `li` (the row under the mouse), so it can be found on screen.
 void HudEditor::highlight(int li) {
     if (li == list_hl_ || !doc_)
         return;
     list_hl_ = li;
-    Rml::Element* boxes = doc_->GetElementById("boxes");
-    if (!boxes)
+    place_highlight();
+}
+
+void HudEditor::place_highlight() {
+    Rml::Element* hl = doc_ ? doc_->GetElementById("hlbox") : nullptr;
+    if (!hl)
         return;
-    for (int c = 0; c < boxes->GetNumChildren(); ++c) {
-        Rml::Element* e = boxes->GetChild(c);
-        const Rml::Variant* a = e->GetAttribute("data-li");
-        e->SetClass("hl", a && a->Get<int>() == li);
+    if (list_hl_ < 0 || list_hl_ >= static_cast<int>(list_boxes_.size())) {
+        hl->SetProperty("display", "none");
+        redraw_ = true;
+        return;
     }
+    const hud::Box& b = list_boxes_[static_cast<std::size_t>(list_hl_)];
+    float ix, iy, iw, ih;
+    image_rect(ix, iy, iw, ih);
+    hl->SetProperty("display", "block");
+    hl->SetProperty("left", fmt("%.0fpx", ix + b.x0 / 640.0f * iw - 3.0f, 0, 0, 0));
+    hl->SetProperty("top", fmt("%.0fpx", iy + b.y0 / 480.0f * ih - 3.0f, 0, 0, 0));
+    hl->SetProperty("width", fmt("%.0fpx", std::max(6.0f, (b.x1 - b.x0) / 640.0f * iw + 6.0f), 0, 0, 0));
+    hl->SetProperty("height", fmt("%.0fpx", std::max(6.0f, (b.y1 - b.y0) / 480.0f * ih + 6.0f), 0, 0, 0));
     redraw_ = true;
 }
 

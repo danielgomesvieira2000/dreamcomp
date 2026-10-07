@@ -79,8 +79,9 @@ private:
     std::vector<std::string> list_values_;
     std::string list_sig_;
     int list_hl_ = -1;
-    void rebuild_list(const std::vector<std::size_t>& list_of_box);
+    void rebuild_list(const std::vector<hud::Box>& rows);
     void highlight(int li);
+    void place_highlight();
     void set_paused(bool on);
     void show_pause();
 };

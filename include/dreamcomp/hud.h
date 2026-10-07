@@ -30,7 +30,10 @@ bool parse(const std::string& s, Anchor& out) noexcept;
 
 struct Override {
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // console coordinates, before correction
-    std::vector<std::uint32_t> tcws;        // texture words of the pieces; empty: any
+    // Texture words of the pieces; empty: any. 0 stands for untextured pieces: their TCW slot
+    // holds leftover data that changes from frame to frame (2026-10-07: Jet Grind Radio, 29
+    // overrides saved for one piece, each matching a single frame), so it is never compared.
+    std::vector<std::uint32_t> tcws;
     Anchor anchor = Anchor::Auto;
     // `full=1`: also applies to pieces wider than the rule's full_width. Off by default, so a
     // large rectangle never pulls a fade or a full-screen backdrop into the HUD (which made the
@@ -63,6 +66,9 @@ struct Box {
 };
 struct Snapshot {
     std::vector<Box> boxes;
+    // Every HUD piece on its own (the F2 list): its rectangle, its texture word, the anchor its
+    // element got. `boxes` groups them into elements (the F1 outlines).
+    std::vector<Box> pieces;
     float image_aspect = 4.0f / 3.0f;  // the picture's shape (the 640x480 space spans it)
     bool edges = true;                 // HUD layout: anchored to edges (else centred 4:3)
     std::uint64_t frame = 0;  // a new number per snapshot (also while the game is paused)
