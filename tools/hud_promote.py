@@ -73,15 +73,18 @@ def parse(path):
         except (KeyError, ValueError, AssertionError):
             sys.exit(f"{path}:{n}: expected rect=x0,y0,x1,y1 anchor=... [tcw=...]: {line.strip()}")
         tcws = tuple(sorted(int(t, 0) for t in fields.get("tcw", "").split(",") if t))
-        out.append((rect, anchor, tcws))
+        full = fields.get("full", "") in ("1", "true")
+        out.append((rect, anchor, tcws, full))
     return out
 
 
 def fmt(entry):
-    rect, anchor, tcws = entry
+    rect, anchor, tcws, full = entry
     s = "rect=%s anchor=%s" % (",".join("%g" % v for v in rect), anchor)
     if tcws:
         s += " tcw=" + ",".join("0x%08x" % t for t in tcws)
+    if full:
+        s += " full=1"
     return s
 
 
@@ -104,10 +107,10 @@ def main():
     port = parse(dst)
     added = updated = 0
     for entry in user:
-        rect, anchor, tcws = entry
-        for i, (r, an, t) in enumerate(port):
+        rect, anchor, tcws, full = entry
+        for i, (r, an, t, fu) in enumerate(port):
             if r == rect and t == tcws:
-                if an != anchor:
+                if an != anchor or fu != full:
                     port[i] = entry
                     updated += 1
                 break

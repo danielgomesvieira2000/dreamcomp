@@ -27,7 +27,7 @@ What the heuristic gets wrong is fixed per element, without code:
 
 | Piece | Where |
 |---|---|
-| Override | `rect=x0,y0,x1,y1 anchor=left\|center\|right\|stretch\|auto [tcw=0x..,0x..]`, one per line: a rectangle in the console's 640x480 coordinates *before* correction (holds at any window shape), the texture words of the element's pieces (none: any). A flat piece whose centre is in the rectangle and whose texture is listed is forced into the HUD with that anchor (`auto`: by thirds), or left stretched. Later lines win. |
+| Override | `rect=x0,y0,x1,y1 anchor=left\|center\|right\|stretch\|auto [tcw=0x..,0x..]`, one per line: a rectangle in the console's 640x480 coordinates *before* correction (holds at any window shape), the texture words of the element's pieces (none: any), optional `full=1`. A flat piece whose centre is in the rectangle and whose texture is listed is forced into the HUD with that anchor (`auto`: by thirds), or left stretched. Pieces wider than the rule's `full_width` (fades, full-screen backdrops) are matched only by `full=1` overrides. Later lines win. |
 | Files | the port's `game/hud_overrides.ini` beside `<id>.toml` (loaded first, shipped), then the player's `<settings dir>/hud_overrides.ini`. Log line `dreamcomp: HUD overrides: N from the port, M from the player`. |
 | Editor | **F1** in game (src/frontend/hud_editor.cpp, in the overlay; the engine's binding screen no longer opens on F1). Outlines per element: **L** blue, **C** green, **R** red, **S** yellow (stretched), `*` overridden; grey: flat 2D pieces left alone. Left click cycles left > centre > right > stretched, right click back to automatic, a click on grey adds the piece; **Space** (or Pause) holds the game still so the HUD on screen can be edited -- the still frame is redrawn with each change -- and closing the editor always resumes; drag the panel to move it (P: next corner); S saves the player's file. Works with Original too (shows where elements would anchor; nothing moves). |
 | Promotion | `python tools/hud_promote.py <slug>`: merges the player's file into the port's, empties the player's (`.bak` kept). Skill `/dc-hud`. |
@@ -45,6 +45,15 @@ script: pause at frame 3726, a click moved Kilik's group on the still frame and 
 followed (snapshots are numbered per redraw, not per vblank), the panel dragged and kept its place
 after reopening, game resumed; fight scenario bit-identical when the editor is not used. Also
 fixed: elements with no piece drawn produced `left: -infpx` style errors (now skipped).
+
+Same day, a cascade from that session's saved file: one broad override (8,42-381,302, including
+the untextured word 0x00000000) pulled the game's full-screen fade quad into the HUD; grouping then
+chained it with everything into one outline covering the screen; a click on it created a
+whole-screen override, and every later click on a piece with those textures cycled that same
+entry. Fixes: overrides skip pieces wider than `full_width` unless `full=1`; the editor refuses to
+create a new override from an outline wider than 600 or over half the screen (status line says
+why; Reset still works). Verified: the VS screen shows separate outlines (portraits, VS, STAGE 1);
+unit checks for `full`.
 
 ## How a primitive is classified
 

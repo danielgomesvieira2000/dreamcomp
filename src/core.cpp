@@ -583,6 +583,12 @@ public:
     }
     // The player's override for `box`: the one that decided it if that is the player's, else a
     // new one covering the element (2 px of slack) and its textures.
+    // An element this large is a grouping accident (pieces chained across the screen), not one
+    // HUD element: a new override from it would catch everything with its textures everywhere.
+    static bool too_large(const hud::Box& box) {
+        const float w = box.ox1 - box.ox0, h = box.oy1 - box.oy0;
+        return w > 600.0f || w * h > 0.5f * 640.0f * 480.0f;
+    }
     hud::Override& user_override_for(const hud::Box& box) {
         const int port_n = static_cast<int>(hud_port_overrides_.items.size());
         if (box.override_index >= port_n &&
@@ -600,6 +606,15 @@ public:
     void hud_edit(const hud::Box& box, hud::Edit edit) {
         using hud::Anchor;
         const int port_n = static_cast<int>(hud_port_overrides_.items.size());
+        const bool own = box.override_index >= port_n;  // edits the player's own override
+        if (edit != hud::Edit::Reset && !own && too_large(box)) {
+            hud_status_ = "this outline spans most of the screen: it is several elements the "
+                          "grouping chained together. Right click resets an override that made it; "
+                          "edit the pieces once they show separately.";
+            std::printf("hud editor: refused an override over %.0f,%.0f-%.0f,%.0f (too large)\n",
+                        box.ox0, box.oy0, box.ox1, box.oy1);
+            return;
+        }
         switch (edit) {
             case hud::Edit::Cycle: {
                 const Anchor next = box.anchor == Anchor::Left     ? Anchor::Center

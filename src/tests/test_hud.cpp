@@ -168,6 +168,24 @@ int main(int argc, char** argv) {
         CHECK(!bad.load(dir / "bad.ini", &err));
     }
 
+    // Overrides and full-width pieces: a fade (640 wide) under a large override stays out of
+    // the HUD unless the override says full=1.
+    {
+        hud::Overrides ov;
+        hud::Override big;
+        big.x0 = 0; big.y0 = 0; big.x1 = 640; big.y1 = 480; big.anchor = hud::Anchor::Center;
+        ov.items = {big};
+        CHECK(ov.match(320, 240, 0, /*wide=*/true) == -1);
+        CHECK(ov.match(320, 240, 0, /*wide=*/false) == 0);
+        ov.items[0].full = true;
+        CHECK(ov.match(320, 240, 0, /*wide=*/true) == 0);
+        const auto file = dir / "full.ini";
+        std::string err;
+        CHECK(ov.save(file, &err));
+        hud::Overrides back;
+        CHECK(back.load(file, &err) && back.items.size() == 1 && back.items[0].full);
+    }
+
     // Sharp 2D: a 12x24 glyph quad mapping 12x24 texels of a 512x512 texture, bilinear.
     {
         auto quad = [](dream::render::Frame& f, float x0, float y0, float x1, float y1, float u0,

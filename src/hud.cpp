@@ -38,10 +38,12 @@ bool Override::covers(float cx, float cy, std::uint32_t tcw) const noexcept {
     return tcws.empty() || std::find(tcws.begin(), tcws.end(), tcw) != tcws.end();
 }
 
-int Overrides::match(float cx, float cy, std::uint32_t tcw) const noexcept {
-    for (int i = static_cast<int>(items.size()) - 1; i >= 0; --i)
-        if (items[static_cast<std::size_t>(i)].covers(cx, cy, tcw))
+int Overrides::match(float cx, float cy, std::uint32_t tcw, bool wide) const noexcept {
+    for (int i = static_cast<int>(items.size()) - 1; i >= 0; --i) {
+        const Override& o = items[static_cast<std::size_t>(i)];
+        if ((!wide || o.full) && o.covers(cx, cy, tcw))
             return i;
+    }
     return -1;
 }
 
@@ -78,6 +80,8 @@ bool Overrides::load(const std::filesystem::path& file, std::string* error) {
                 while (std::getline(list, t, ','))
                     if (!t.empty())
                         o.tcws.push_back(static_cast<std::uint32_t>(std::strtoul(t.c_str(), nullptr, 0)));
+            } else if (key == "full") {
+                o.full = value == "1" || value == "true";
             } else {
                 bad = true;
             }
@@ -86,7 +90,8 @@ bool Overrides::load(const std::filesystem::path& file, std::string* error) {
             continue;  // blank or comment
         if (bad || !have_rect || !have_anchor) {
             if (error)
-                *error = file.string() + ":" + std::to_string(n) + ": expected rect=x0,y0,x1,y1 anchor=... [tcw=...]";
+                *error = file.string() + ":" + std::to_string(n) +
+                         ": expected rect=x0,y0,x1,y1 anchor=... [tcw=...] [full=1]";
             return false;
         }
         items.push_back(std::move(o));
@@ -119,6 +124,8 @@ bool Overrides::save(const std::filesystem::path& file, std::string* error) cons
                     out << buf;
                 }
             }
+            if (o.full)
+                out << " full=1";
             out << "\n";
         }
         if (!out) {
@@ -229,7 +236,9 @@ void correct(dream::render::Frame& frame, const PortInfo::HudRule& rule, float a
                 continue;
             float x0, x1, y0, y1;
             rect(p, x0, x1, y0, y1);
-            const int m = any_overrides ? overrides.match(0.5f * (x0 + x1), 0.5f * (y0 + y1), p.tcw) : -1;
+            const int m = any_overrides ? overrides.match(0.5f * (x0 + x1), 0.5f * (y0 + y1), p.tcw,
+                                                          x1 - x0 > rule.full_width)
+                                        : -1;
             if (m >= 0) {
                 const Anchor a = overrides.items[static_cast<std::size_t>(m)].anchor;
                 if (a == Anchor::Stretch) {

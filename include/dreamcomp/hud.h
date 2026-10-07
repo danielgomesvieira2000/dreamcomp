@@ -32,6 +32,11 @@ struct Override {
     float x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // console coordinates, before correction
     std::vector<std::uint32_t> tcws;        // texture words of the pieces; empty: any
     Anchor anchor = Anchor::Auto;
+    // `full=1`: also applies to pieces wider than the rule's full_width. Off by default, so a
+    // large rectangle never pulls a fade or a full-screen backdrop into the HUD (which made the
+    // editor outline the whole screen as one element, 2026-10-07). For a full-screen picture
+    // that is really 4:3 art (Jet Grind Radio's boot notice).
+    bool full = false;
     bool covers(float cx, float cy, std::uint32_t tcw) const noexcept;
 };
 
@@ -39,10 +44,11 @@ struct Override {
 struct Overrides {
     std::vector<Override> items;
     // Appends the file's entries (missing file: nothing, true). Lines:
-    //   rect=x0,y0,x1,y1 anchor=left|center|right|stretch [tcw=0x...,0x...]  # comment
+    //   rect=x0,y0,x1,y1 anchor=left|center|right|stretch [tcw=0x...,0x...] [full=1]  # comment
     bool load(const std::filesystem::path& file, std::string* error = nullptr);
     bool save(const std::filesystem::path& file, std::string* error = nullptr) const;
-    int match(float cx, float cy, std::uint32_t tcw) const noexcept;  // index, or -1
+    // Index, or -1. `wide`: the piece is wider than full_width (only `full` overrides match).
+    int match(float cx, float cy, std::uint32_t tcw, bool wide = false) const noexcept;
 };
 
 // What the editor shows: one box per element (pieces grouped as the correction groups them) and,

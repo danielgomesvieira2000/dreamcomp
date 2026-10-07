@@ -31,6 +31,10 @@ python tools/hud_promote.py <slug>                # merge into ports/<slug>-reco
 - It merges the player's file into the port's (same rectangle + textures: anchor updated; else
   appended), then empties the player's file (`.bak` kept) so stale lines cannot mask the port's.
   `--keep` leaves it; `--from FILE` promotes another file (a scenario's scratch folder).
+- Before promoting, read the player's file: a rectangle covering most of the screen, or the
+  untextured word `0x00000000` in a large rectangle, catches far more than one element (T20).
+  After promoting, compare *every* scenario (fight, menus, attract) against a run without the
+  overrides and show Daniel the screens that changed beyond the element he edited.
 - Verify: `python tools/scenario.py <scenario> --set aspect=expanded` and read the log line
   `dreamcomp: HUD overrides: N from the port, 0 from the player`; compare screenshots before and
   after (`scenario.py --compare`).
