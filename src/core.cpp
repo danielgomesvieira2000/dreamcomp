@@ -349,9 +349,11 @@ public:
                 args.push_back(disc);
             }
         }
-        if (play) {
-            // Double-clicked (or --launcher): play, with the player's saved choices. A flag given
-            // on the command line wins (the engine takes the last occurrence, so none is added).
+        // Played in a window -- double-clicked, --launcher, or `--window` (tools/dc.py run) -- with
+        // the player's saved choices. A flag given on the command line wins (scenarios pass their
+        // own --scale and --vmu). Until 2026-10-07 only the first two got them: `dc.py run
+        // --window` started at 1x and with no memory card, so the game could not save.
+        if (play || has_flag(args, "--window")) {
             if (!has_flag(args, "--window"))
                 args.push_back("--window");
             if (!has_flag(args, "--scale")) {
