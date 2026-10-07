@@ -51,7 +51,7 @@ Start Game. Keys in use:
 | Key | Values (default) | Engine flag added by `src/core.cpp` |
 |---|---|---|
 | `disc` | image path | `--disc` |
-| `scale` | 1-8 (2) | `--scale` (launcher / bare launch) |
+| `scale` | 1-8 (2) | `--scale` (launcher / bare launch); changed in game it applies at once (`set_render_scale`, no restart) |
 | `aspect` | `4:3`, `16:9` (default), `21:9`, `32:9`; capped by `PortInfo::max_aspect` | `--render-aspect` (anamorphic ports) |
 | `fit` | `crop` (default), `letterbox`, `stretch` | presenter option |
 | `fullscreen` | `true`/`false` (false) | `--fullscreen` |

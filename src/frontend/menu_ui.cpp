@@ -903,7 +903,7 @@ std::string MenuUi::tab_graphics() {
                    "sharper and needs a faster graphics card.<br/><br/>Now: " +
                        esc(scale_label(scale, draft_aspect(), anam)) +
                        (draft_expanded() ? " at 16:9; the width follows the window" : ""),
-                   false);
+                   true);  // live: the render target is rebuilt at the next vblank
     // As in the N64 recomps: the original 4:3 picture, or the view widened to the window.
     s += row_radio("aspect", "Aspect ratio", {{"original", "Original"}, {"expanded", "Expanded"}},
                    ws && draft_expanded() ? "expanded" : "original",

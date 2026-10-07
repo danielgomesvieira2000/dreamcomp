@@ -323,10 +323,17 @@ struct Live {
     // Rebuilds the render target(s) at a new shape (dreamcomp; Expanded aspect follows the
     // window). On the guest thread at a vblank: the device is idled, the old frame is not shown
     // again, and the next render fills the new target.
+    // A new scale (dreamcomp: Resolution applied in game) takes the same path.
     void retarget() {
-        if (want_render_aspect <= 0.0f || std::fabs(want_render_aspect - render_aspect_) < 0.005f)
+        const bool new_aspect =
+            want_render_aspect > 0.0f && std::fabs(want_render_aspect - render_aspect_) >= 0.005f;
+        const bool new_scale = want_scale != 0 && want_scale != scale_;
+        if (!new_aspect && !new_scale)
             return;
-        render_aspect_ = want_render_aspect;
+        if (new_aspect)
+            render_aspect_ = want_render_aspect;
+        if (new_scale)
+            scale_ = want_scale;
         std::uint32_t w = 0, h = 0;
         target_size(render_aspect_, w, h);
         if (w == offscreen.width() && h == offscreen.height())
@@ -1072,6 +1079,7 @@ struct Live {
     bool interpolate = false, pace_interpolation = true, have_prev = false, interp_ready = false;
     unsigned scale_ = 1;
     float render_aspect_ = 0.0f, want_render_aspect = 0.0f;
+    unsigned want_scale = 0;  // dreamcomp: a scale asked for at run time, 0: none
     bool await_render = false;
     bool interpolate_only_above_60 = false;
     dream::render::vk::Offscreen interp_off;
@@ -2388,6 +2396,7 @@ int main(int argc, char** argv) {
                 return e.height ? static_cast<float>(e.width) / static_cast<float>(e.height) : 0.0f;
             };
             hc.set_render_aspect = [lp](float a) { lp->want_render_aspect = a; };
+            hc.set_render_scale = [lp](unsigned sc) { lp->want_scale = std::clamp(sc, 1u, 8u); };
             hc.bindings_path = [lp] { return lp->bindings_path; };
             hc.reload_bindings = [lp] { lp->load_bindings(); };
             hc.set_volume = [&volume_percent](float v) {

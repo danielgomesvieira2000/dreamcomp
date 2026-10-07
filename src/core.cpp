@@ -741,6 +741,9 @@ public:
                           100.0f);
         if (hc.set_soft_clip)
             hc.set_soft_clip(g_settings.get("clip", "hard") == "soft");
+        // Resolution: the render target is rebuilt at the next vblank (no restart).
+        if (hc.set_render_scale)
+            hc.set_render_scale(static_cast<unsigned>(std::clamp(g_settings.get_int("scale", 2), 1, 8)));
         if (hc.set_fullscreen && hc.fullscreen &&
             hc.fullscreen() != g_settings.get_bool("fullscreen", false))
             hc.set_fullscreen(g_settings.get_bool("fullscreen", false));

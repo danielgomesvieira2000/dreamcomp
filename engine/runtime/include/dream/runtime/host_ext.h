@@ -101,6 +101,9 @@ struct HostControls {
     // target is rebuilt at the next vblank.
     std::function<float()> window_aspect;
     std::function<void(float)> set_render_aspect;
+    // A new resolution multiple (1-8) for the render target, rebuilt at the next vblank like
+    // set_render_aspect (dreamcomp: Resolution changes without a restart).
+    std::function<void(unsigned)> set_render_scale;
     // The controller bindings file (dreamcomp): an overlay that edits bindings writes this file,
     // then calls reload_bindings so the game uses them at once.
     std::function<std::string()> bindings_path;
