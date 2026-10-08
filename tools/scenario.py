@@ -39,6 +39,20 @@ def fight_press():
     return ",".join(p)
 
 
+MAINMENU_MOVES = [("down", 1000), ("down", 1080), ("down", 1160), ("up", 1240), ("up", 1320),
+                  ("up", 1400), ("down", 1480)]
+
+
+def mainmenu_press():
+    # Soulcalibur: through the title to the main menu, then move through the items (the menu
+    # scrolls and the NEW badges flash: HUD anchoring must hold while they move).
+    return ",".join(["start@600", "start@900"] + [f"{b}@{f}" for b, f in MAINMENU_MOVES])
+
+
+def mainmenu_shots():
+    return ",".join(str(f + d) for _, f in MAINMENU_MOVES for d in (2, 6, 10, 14, 20, 30))
+
+
 def jgr_play_press():
     # Through the boot notices, the title menu (Start is only taken once the menu is up: pressed
     # every 100 frames), the story intro and Gum's tutorial dialogue (A every 90 frames), then
@@ -69,6 +83,8 @@ SCENARIOS = {
     "fight-long": (12000, fight_press(), "2500,4500,6500,8500,10500,11800", "several arcade fights"),
     "attract": (9000, "start@600", "900,1500,2100,2700,3300,3900,4500,5100,5700,6300,6900,7500,8100,8700",
                 "no input: title, intro and the demo loop"),
+    "mainmenu": (1600, mainmenu_press(), mainmenu_shots(),
+                 "main menu, moving down and up through the items (shots just after each move)"),
 }
 
 
