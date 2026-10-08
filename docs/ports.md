@@ -6,7 +6,7 @@ One section per port: paths, commands, keys, status. Skills read this instead of
 
 | | |
 |---|---|
-| Local repo | `ports/soulcalibur-recomp` (branch `main`; no GitHub remote yet) |
+| Local repo | `ports/soulcalibur-recomp` (branch `main`), public at https://github.com/danielgomesvieira2000/soulcalibur-recomp (2026-10-08) |
 | Disc | T1401N V1.000 (1999-07-30); boot `1ST_READ.BIN` 3,679,460 bytes, SHA-1 `967ca1fe2e8c7df57a5de1e83d939bed483cc6c9` |
 | SDK | Shinobi 1.43, Ninja (Apr 1999), Kamui 1.06, sd 1.00.18 (strings in the boot file) |
 | Build | `python tools/dc.py build ports/soulcalibur-recomp` → `build/game/soulcalibur-recomp.exe` |
