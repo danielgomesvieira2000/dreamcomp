@@ -21,7 +21,8 @@ element's texture words, and an anchor: left, center, right, stretch (left alone
    (**P**: next corner), **S** saves, **F1/Esc** closes (and resumes).
    **F2** opens the same editor as a list of individual pieces (not the F1 groups), each with a
    dropdown for its anchor; hovering a row frames that piece; it pauses the game itself. A piece
-   anchored on its own leaves its group.
+   anchored on its own leaves its group. **Centre all** (F2 button) centres every listed HUD
+   piece at once; then change the exceptions.
 4. Saved to `<settings dir>/hud_overrides.ini` (Windows: `%APPDATA%/dreamcomp/<id>/`).
 
 ## Making it permanent (you)
@@ -53,7 +54,7 @@ DREAMCOMP_OVERLAY_KEYS="@2300,f1,wait,wait,wait,shot:a.png,click:hud-0,wait,wait
 ```
 through `scenario.py --env` (fight scenario): outlines are `hud-N` / `piece-N` in drawing order.
 F2 list: `...,f2,wait,wait,select:sel-0:center,...` sets row 0's dropdown (rows `row-N`, dropdowns
-`sel-N`, values auto/left/center/right/stretch/none).
+`sel-N`, values auto/left/center/right/stretch/none); `click:centerall` presses Centre all.
 An edit shows after about a second (vblank hand-over + snapshot refresh): wait before the shot.
 Unit tests: target `dreamcomp_hud_tests` (`<build>/dreamcomp/dreamcomp_hud_tests <scratch dir>`).
 

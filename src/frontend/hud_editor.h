@@ -46,6 +46,8 @@ public:
     void ProcessEvent(Rml::Event& ev) override;
     // A dropdown in the list set to `value`, as if chosen with the mouse (scripted tests).
     void choose(const std::string& select_id, const std::string& value);
+    // F2 "Centre all": every HUD row of the list anchored to the centre.
+    void center_all();
     Rml::Element* element(const std::string& id) const { return doc_ ? doc_->GetElementById(id) : nullptr; }
 
 private:

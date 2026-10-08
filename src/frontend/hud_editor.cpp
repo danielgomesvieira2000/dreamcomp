@@ -57,6 +57,8 @@ button:hover { background-color: #2c3a5c; }
 #panel.listmode { width: 470dp; }
 #panel.listmode #list { display: block; }
 #panel.listmode .help-click { display: none; }
+#centerall { display: none; }
+#panel.listmode #centerall { display: inline-block; }
 .row { display: flex; flex-direction: row; align-items: center; height: 26dp; padding: 1dp 4dp; }
 .row:hover { background-color: #ffffff18; }
 .row .lbl { display: block; flex: 0 0 280dp; width: 280dp; height: 24dp; font-size: 13dp; line-height: 24dp; white-space: nowrap; }
@@ -85,9 +87,9 @@ select selectbox option:hover { background-color: #2c3a5c; }
 <span class="r">right</span> &gt; <span class="s">stretched</span>. <span class="key">Right click</span>: back to automatic.
 <span class="key">Click a grey outline</span>: add it to the HUD.</p>
 <p><span class="key">Space</span> pause / resume the game (edit the HUD on screen), <span class="key">S</span> save,
-<span class="key">drag</span> this panel to move it (<span class="key">P</span>: next corner), <span class="key">F1</span> outlines, <span class="key">F2</span> list (choose an anchor per element; hover a row to see its outline), <span class="key">Esc</span> close.
+<span class="key">drag</span> this panel to move it (<span class="key">P</span>: next corner), <span class="key">F1</span> outlines, <span class="key">F2</span> list (choose an anchor per element; hover a row to see its outline; <span class="key">Centre all</span> sets every HUD row to centre), <span class="key">Esc</span> close.
 Saved overrides go to your settings folder; <span class="key">tools/hud_promote.py</span> moves them into the port.</p>
-<div class="buttons"><button id="pause">Pause</button><button id="save">Save</button><button id="close">Close</button></div>
+<div class="buttons"><button id="centerall">Centre all</button><button id="pause">Pause</button><button id="save">Save</button><button id="close">Close</button></div>
 </div>
 </body>
 </rml>)";
@@ -447,6 +449,28 @@ void HudEditor::choose(const std::string& select_id, const std::string& value) {
         sel->SetValue(value);  // fires Change, handled like a mouse choice
 }
 
+// F2 "Centre all" (Daniel: automatic anchors flip when an element crosses a screen third): every
+// HUD row of the list that is not centred yet gets a centre override, one hud_set per piece in a
+// single game-thread task; the player then changes the exceptions by hand. Grey rows stay out.
+void HudEditor::center_all() {
+    if (!list_mode_ || !ctx_.hud_set)
+        return;
+    std::vector<hud::Box> boxes;
+    for (std::size_t r = 0; r < list_boxes_.size(); ++r)
+        if (list_boxes_[r].hud && list_values_[r] != "center") {
+            boxes.push_back(list_boxes_[r]);
+            list_values_[r] = "center";
+        }
+    std::printf("hud editor: centre all: %zu pieces\n", boxes.size());
+    if (boxes.empty())
+        return;
+    post_([fn = ctx_.hud_set, boxes = std::move(boxes)] {
+        for (const hud::Box& b : boxes)
+            fn(b, "center");
+    });
+    last_pull_ms_ = 0;
+}
+
 void HudEditor::tick() {
     if (!visible_ || !ctx_.hud_snapshot)
         return;
@@ -594,6 +618,10 @@ void HudEditor::ProcessEvent(Rml::Event& ev) {
             }
             if (e->GetId() == "pause") {
                 set_paused(!paused_);
+                return;
+            }
+            if (e->GetId() == "centerall") {
+                center_all();
                 return;
             }
         }
