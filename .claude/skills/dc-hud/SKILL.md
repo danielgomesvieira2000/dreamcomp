@@ -54,7 +54,7 @@ DREAMCOMP_OVERLAY_KEYS="@2300,f1,wait,wait,wait,shot:a.png,click:hud-0,wait,wait
 ```
 through `scenario.py --env` (fight scenario): outlines are `hud-N` / `piece-N` in drawing order.
 F2 list: `...,f2,wait,wait,select:sel-0:center,...` sets row 0's dropdown (rows `row-N`, dropdowns
-`sel-N`, values auto/left/center/right/stretch/none); `click:centerall` presses Centre all.
+`sel-N`, values auto/left/center/right/stretch/none); `click:centerall` presses Centre all. The list logs every row (`hud editor: row ... override=I tcw=...`): grep it to find which override line moves a piece. Give the run ~200 frames after `@F`, and take shots with `--shots F-2` (an overlay `shot:` with the editor closed stalls the script).
 An edit shows after about a second (vblank hand-over + snapshot refresh): wait before the shot.
 Unit tests: target `dreamcomp_hud_tests` (`<build>/dreamcomp/dreamcomp_hud_tests <scratch dir>`).
 

@@ -385,6 +385,17 @@ void HudEditor::rebuild_list(const std::vector<hud::Box>& rows) {
     list_boxes_.clear();
     list_values_.clear();
     std::string rml;
+    // The rows also go to the log (once per change): which override line decided each piece, so a
+    // stray override can be found from a scripted run (line = 0-based, the port's first).
+    std::printf("hud editor: list of %zu rows\n", rows.size());
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        const hud::Box& b = rows[r];
+        std::printf("hud editor: row %zu %s %.0f,%.0f-%.0f,%.0f anchor=%s override=%d tcw=", r, b.hud ? "hud" : "2d",
+                    b.ox0, b.oy0, b.ox1, b.oy1, hud::name(b.anchor), b.override_index);
+        for (std::size_t t = 0; t < b.tcws.size(); ++t)
+            std::printf("%s0x%08x", t ? "," : "", static_cast<unsigned>(b.tcws[t]));
+        std::printf("\n");
+    }
     for (std::size_t r = 0; r < rows.size(); ++r) {
         const hud::Box& b = rows[r];
         const std::string v = value_of(b);
