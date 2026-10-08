@@ -150,8 +150,30 @@ over 20 ms 48 -> 4 after moving RmlUi off the game thread (the rest: first open,
 | Title, subtitle | `PortInfo::title` (else `[game] title`); `[game] product` / `region` |
 | Version | the port project's `VERSION` |
 | Art, colours | `dreamcomp_add_port(... LAUNCHER_DIR <dir>)`: `art.png` is drawn over the backdrop; `port.rcss` is linked after `dreamcomp.rcss` |
+| Icon | `dreamcomp_add_port(... ICON <png> ICON_ICO <ico>)`, see below |
 
 Port art must be the port author's own work, never extracted from the disc (LEGAL.md).
+
+### Icon
+
+| Piece | Where it shows | Mechanism |
+|---|---|---|
+| `ICON_ICO` (Windows only) | Explorer, taskbar, Alt-Tab; SDL3's default class icon for every window | `<id>_icon.rc` (`1 ICON "<ico>"`) generated into the build and compiled into the exe |
+| `ICON` (PNG, 256 px is plenty) | Title bar of the launcher and the game window, every platform | embedded as bytes by `<id>_port_icon.cpp` (configure time, re-run when the PNG changes); `dreamcomp::set_port_icon()` at static init; `frontend::apply_port_icon()` = `SDL_LoadPNG_IO` + `SDL_SetWindowIcon` |
+
+The launcher sets it right after `SDL_CreateWindow`. The game window belongs to the engine, so the
+overlay sets it on the first SDL event that names a window (`SDL_GetWindowFromEvent`), on the
+polling thread: no engine change. Builds without the frontend keep the platform default window
+icon (Windows still gets `ICON_ICO`).
+
+Check (Windows): `[System.Drawing.Icon]::ExtractAssociatedIcon(<exe>)` shows the exe icon;
+`WM_GETICON` on the game window returns non-zero only when `SDL_SetWindowIcon` ran (the class icon
+is not reported there). A failed PNG decode logs `dreamcomp: window icon: <SDL error>`.
+
+Elsewhere (any CMake + SDL3 project): embed the PNG with `file(READ ... HEX)` plus a regex into a
+generated `.cpp`, decode it with `SDL_IOFromConstMem` + `SDL_LoadPNG_IO` (SDL 3.4+, no SDL_image),
+call `SDL_SetWindowIcon` after creating the window; on Windows add an `.rc` with icon id 1 to the
+executable's sources (CMake compiles `.rc` with the MSVC/clang-cl toolchains).
 
 ## Not done
 

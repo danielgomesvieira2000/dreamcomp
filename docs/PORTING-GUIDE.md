@@ -21,7 +21,7 @@ table entry, VGA support.
 ports/<slug>/                   git init -b main; slug = <full-title>-recomp
   CMakeLists.txt                add_subdirectory(${DREAMCOMP_DIR} dreamcomp); add_subdirectory(game)
   game/<id>.toml                [game] [disc] sha1_1st_read [binary] -- copy soulcalibur's shape
-  game/CMakeLists.txt           dreamcomp_add_port(<id> TITLE ... OUTPUT_NAME <slug> SOURCES ...)
+  game/CMakeLists.txt           dreamcomp_add_port(<id> TITLE ... OUTPUT_NAME <slug> SOURCES ... [ICON ... ICON_ICO ...])
   src/<id>.cpp                  PortInfo registration
   docs/PLAN.md, docs/GAME-INTERNALS.md, docs/findings/
   .gitignore (no-game-data banner), LICENSE (GPL-2.0), README.md, CLAUDE.md

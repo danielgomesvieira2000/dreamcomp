@@ -124,6 +124,7 @@ struct Overlay::Impl {
     bool shot_pending = false;
     std::string pending_shot;
     std::atomic<bool> open{false};
+    bool icon_set = false;  // the port's icon put on the game window (first event naming it)
     std::atomic<bool> hud_mode{false};  // the HUD editor (F1) rather than the menu
     std::atomic<bool> hud_list{false};  // opened with F2: the list of elements with dropdowns
 
@@ -592,6 +593,14 @@ struct Overlay::Impl {
 
     // ---- game thread -----------------------------------------------------------------------------
     bool on_event(const SDL_Event& ev) {
+        // The engine creates the game window; its first event is the earliest point dreamcomp
+        // sees it, on the thread that polls it.
+        if (!icon_set) {
+            if (SDL_Window* w = SDL_GetWindowFromEvent(&ev)) {
+                apply_port_icon(w);
+                icon_set = true;
+            }
+        }
         if (!open.load() && ev.type == SDL_EVENT_KEY_DOWN && (ev.key.key == SDLK_F1 || ev.key.key == SDLK_F2) &&
             !ev.key.repeat) {
             hud_list = ev.key.key == SDLK_F2;

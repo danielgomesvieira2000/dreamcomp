@@ -87,6 +87,7 @@ public:
             *error = std::string("SDL window: ") + SDL_GetError();
             return false;
         }
+        apply_port_icon(window_);
         SDL_SetWindowMinimumSize(window_, 640, 360);
         renderer_ = SDL_CreateRenderer(window_, nullptr);
         if (!renderer_) {

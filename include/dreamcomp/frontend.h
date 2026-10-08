@@ -4,6 +4,7 @@
 // DREAMCOMP_WITH_FRONTEND is defined for dreamcomp_core. Usage and customisation: docs/FRONTEND.md.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -20,7 +21,20 @@ struct PortInfo;
 // calls this from a static initialiser with the port project's VERSION. Defined in core.cpp.
 void set_port_version(const char* version);
 
+// The port's icon as PNG bytes (static storage), used as the window icon of the launcher and the
+// game window. dreamcomp_add_port(... ICON <png>) generates a source file that calls this from a
+// static initialiser; without it the windows keep the platform default. Defined in core.cpp.
+void set_port_icon(const unsigned char* png, std::size_t size);
+// The bytes set_port_icon() received; false (and nothing written) when the port has no icon.
+bool port_icon(const unsigned char** png, std::size_t* size);
+
 namespace frontend {
+
+// Sets port_icon() as `sdl_window`'s icon (an SDL_Window*); no icon or an undecodable PNG leaves
+// the window as it is. Called on the launcher window and, from the overlay's first event, on the
+// game window (the engine creates that one). On Windows the exe's own icon resource (ICON_ICO)
+// already shows in the title bar and taskbar; this covers Linux/macOS. Defined in window_icon.cpp.
+void apply_port_icon(void* sdl_window);
 
 struct LaunchContext {
     Settings* settings = nullptr;          // edited on Apply / Start Game, saved to its file

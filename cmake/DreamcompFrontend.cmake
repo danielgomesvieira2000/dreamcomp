@@ -133,6 +133,7 @@ add_library(dreamcomp_frontend STATIC
   ${DREAMCOMP_ROOT}/src/frontend/soft_render.cpp
   ${DREAMCOMP_ROOT}/src/frontend/launcher_model.cpp
   ${DREAMCOMP_ROOT}/src/frontend/sdl_image_shim.cpp
+  ${DREAMCOMP_ROOT}/src/frontend/window_icon.cpp
   ${_be}/RmlUi_Platform_SDL.cpp
   ${_be}/RmlUi_Renderer_SDL.cpp)
 target_include_directories(dreamcomp_frontend

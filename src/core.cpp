@@ -853,6 +853,22 @@ dream::host::Register g_reg_core(g_core);
 const PortInfo* port() { return g_port; }
 
 void set_port_version(const char* version) { port_version_ref() = version ? version : ""; }
+
+namespace {
+const unsigned char* g_icon_png = nullptr;
+std::size_t g_icon_size = 0;
+}  // namespace
+void set_port_icon(const unsigned char* png, std::size_t size) {
+    g_icon_png = png;
+    g_icon_size = size;
+}
+bool port_icon(const unsigned char** png, std::size_t* size) {
+    if (!g_icon_png || !g_icon_size)
+        return false;
+    *png = g_icon_png;
+    *size = g_icon_size;
+    return true;
+}
 Settings& settings() { return g_settings; }
 
 RegisterPort::RegisterPort(const PortInfo& info) { g_port = &info; }
