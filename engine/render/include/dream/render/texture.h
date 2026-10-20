@@ -41,6 +41,11 @@ enum class PaletteFormat : unsigned { Argb1555 = 0, Rgb565 = 1, Argb4444 = 2, Ar
 struct TextureInfo {
     std::uint32_t address = 0;  // byte offset into the 64-bit view of video memory
     std::uint32_t width = 8, height = 8;
+    // Row pitch in texels for a linear texture. Equal to width unless the hardware's
+    // TEXT_CONTROL stride applies (stride textures: video frames narrower than the declared
+    // texture width, e.g. 320 pixels shown through a 512-wide texture). `width` stays the
+    // declared width because that is what UVs are relative to.
+    std::uint32_t row_stride = 0;
     PixelFormat format = PixelFormat::Argb1555;
     bool twiddled = true;
     bool vq = false;
@@ -56,8 +61,9 @@ struct TextureInfo {
     std::string describe() const;
 };
 
-// `stride_width` is the width in texels from the TEXT_CONTROL register, used only by stride
-// textures. Returns false when the words describe something the decoder cannot handle.
+// `stride_width` is the row pitch in texels from the TEXT_CONTROL register, used only by stride
+// textures. It changes how rows are read, not the texture's declared width (UVs stay relative to
+// `width`). Returns false when the words describe something the decoder cannot handle.
 bool describe_texture(std::uint32_t tcw, std::uint32_t tsp, std::uint32_t stride_width,
                       TextureInfo& out);
 

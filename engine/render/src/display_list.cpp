@@ -117,6 +117,7 @@ void Frame::clear() {
     modifiers.clear();
     min_z = 0;
     max_z = 0;
+    text_control = 0;
     strips = 0;
     sprites = 0;
     dropped_vertices = 0;

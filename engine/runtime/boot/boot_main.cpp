@@ -442,6 +442,9 @@ struct Live {
                                           dream::mem::DcMemory::kVramSize))
             ++backgrounds;
         for (auto* e : dream::host::extensions()) e->on_frame(decoder.frame());
+        // TEXT_CONTROL: stride textures (video frames packed into a wider texture) read their
+        // rows at (bits 0-4) * 32 texels, not at the declared width.
+        decoder.frame().text_control = pvr_.reg(0x0E4);
         const dream::render::Frame& frame = decoder.frame();
         // PT_ALPHA_REF: the punch-through threshold the guest chose, which changes per scene.
         geometry.alpha_ref = static_cast<float>(pvr_.reg(0x11C) & 0xFFu) / 255.0f;

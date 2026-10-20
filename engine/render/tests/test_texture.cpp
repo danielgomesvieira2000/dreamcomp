@@ -104,6 +104,31 @@ TEST_CASE("texture: the word pair describes size, format and layout") {
     CHECK_FALSE(describe_texture(make_tcw(0, 7), make_tsp(0, 0), 0, info));
 }
 
+TEST_CASE("texture: a stride texture reads rows at TEXT_CONTROL's pitch") {
+    auto v = vram();
+    TextureInfo info;
+    // RGB565, linear, StrideSel set (TCW bit 25): declared 16x8, row pitch 32 texels.
+    const u32 tcw = make_tcw(0, 1, /*twiddled=*/false) | (1u << 25);
+    REQUIRE(describe_texture(tcw, make_tsp(1, 0), 32, info));
+    CHECK(info.width == 16);
+    CHECK(info.height == 8);
+    CHECK_FALSE(info.twiddled);
+    CHECK(info.row_stride == 32);
+    CHECK(info.size_bytes() == 32 * 8 * 2);
+
+    // One marker per row, plus white padding after the declared width.
+    put16(v, (0 * 32 + 0) * 2, 0xF800u);  // row 0, red
+    put16(v, (1 * 32 + 1) * 2, 0x07E0u);  // row 1, green
+    put16(v, (2 * 32 + 2) * 2, 0x001Fu);  // row 2, blue
+    put16(v, (0 * 32 + 16) * 2, 0xFFFFu); // padding, must not be read
+    std::vector<u32> pixels;
+    std::uint32_t palette[1024] = {};
+    REQUIRE(decode_texture(info, v.data(), v.size(), palette, pixels));
+    CHECK(pixels[0] == 0xFF0000FFu);           // row 0 red
+    CHECK(pixels[1 * 16 + 1] == 0xFF00FF00u);  // row 1 green
+    CHECK(pixels[2 * 16 + 2] == 0xFFFF0000u);  // row 2 blue
+}
+
 TEST_CASE("texture: the three 16-bit formats expand to full-range RGBA") {
     auto v = vram();
     TextureInfo info;

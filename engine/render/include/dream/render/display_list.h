@@ -77,6 +77,9 @@ struct Frame {
     std::vector<ModifierTriangle> modifiers;
     // The depth range the frame actually uses, for the projection the backend sets up.
     float min_z = 0, max_z = 0;
+    // TEXT_CONTROL (PVR register 0x0E4): bits 0-4 give a stride texture's row pitch as a
+    // multiple of 32 texels. Video frames are 320 pixels wide inside a 512-wide texture.
+    std::uint32_t text_control = 0;
     // Diagnostics, and what the headless tests assert on.
     std::uint32_t strips = 0, sprites = 0, dropped_vertices = 0, unknown_parameters = 0;
 

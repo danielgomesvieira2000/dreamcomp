@@ -322,7 +322,7 @@ bool TextureCache::upload(VkCommandBuffer cmd, Entry& e, const std::vector<std::
 }
 
 VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::uint32_t tsp,
-                                  bool tiled) {
+                                  bool tiled, std::uint32_t stride_width) {
     if (!vram_ || !ctx_)
         return VK_NULL_HANDLE;
     // The size lives in the TSP word, the rest in the TCW; together they identify the texture, and
@@ -332,7 +332,10 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
                         // The sampler state (filter, clamp, flip, mip D-adjust: TSP bits 8-18)
                         // is part of the descriptor set, so it is part of the key (dreamcomp):
                         // the first polygon to use a texture no longer decides it for all.
-                        (static_cast<std::uint64_t>((tsp >> 8) & 0x7FFu) << 7);
+                        (static_cast<std::uint64_t>((tsp >> 8) & 0x7FFu) << 7) |
+                        // TEXT_CONTROL's stride changes how the rows are read, so the same
+                        // words with a different stride are a different texture.
+                        (static_cast<std::uint64_t>(stride_width & 0x7FFu) << 18);
     // Indexed textures: fold in the content of the palette banks they read (dreamcomp), so a
     // palette change selects a different entry instead of invalidating this one.
     {
@@ -340,7 +343,7 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
         Meta& meta = mit->second;
         if (fresh) {
             TextureInfo probe;
-            meta.ok = describe_texture(tcw, tsp, 0, probe);
+            meta.ok = describe_texture(tcw, tsp, stride_width, probe);
             meta.indexed = meta.ok && probe.indexed();
             meta.palette_base = probe.palette_base;
             meta.palette_count = probe.format == PixelFormat::Palette4 ? 16u : 256u;
@@ -361,7 +364,7 @@ VkDescriptorSet TextureCache::get(VkCommandBuffer cmd, std::uint32_t tcw, std::u
 
     Entry e;
     e.last_frame = frame_;
-    if (!describe_texture(tcw, tsp, 0, e.info)) {
+    if (!describe_texture(tcw, tsp, stride_width, e.info)) {
         ++failed;
         entries_.emplace(key, std::move(e));  // remember the failure so it is not retried per frame
         return VK_NULL_HANDLE;

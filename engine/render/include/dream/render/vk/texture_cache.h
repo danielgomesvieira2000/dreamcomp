@@ -60,7 +60,8 @@ public:
     // resolution repeat addressing wraps the outermost half-texel to the opposite edge and outlines
     // every quad. It is part of the key: the same texture can be tiled by one polygon and not by
     // another, and the two need different samplers.
-    VkDescriptorSet get(VkCommandBuffer cmd, std::uint32_t tcw, std::uint32_t tsp, bool tiled);
+    VkDescriptorSet get(VkCommandBuffer cmd, std::uint32_t tcw, std::uint32_t tsp, bool tiled,
+                        std::uint32_t stride_width = 0);
 
     // A 1x1 opaque white texture, bound when a polygon's own texture could not be decoded. The
     // shader is told not to sample, but Vulkan still wants a valid set bound, and a white texel

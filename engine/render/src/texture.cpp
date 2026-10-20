@@ -113,7 +113,8 @@ std::uint32_t twiddle_index(std::uint32_t x, std::uint32_t y, std::uint32_t widt
 }
 
 std::uint32_t TextureInfo::size_bytes() const noexcept {
-    u32 texels = width * height;
+    const u32 pitch = twiddled ? width : (row_stride != 0 ? row_stride : width);
+    u32 texels = pitch * height;
     // A mipmapped texture is followed by its whole chain, each level a quarter of the last, which
     // converges on a third more texels. Rounded up: this bounds an invalidation range, and
     // guessing low there means a stale texture, which is the worse way to be wrong.
@@ -157,12 +158,16 @@ bool describe_texture(std::uint32_t tcw, std::uint32_t tsp, std::uint32_t stride
     out.stride = tcw_stride_sel(tcw) != 0;
     out.width = 8u << tsp_tex_u(tsp);
     out.height = 8u << tsp_tex_v(tsp);
+    out.row_stride = out.width;
     // Only non-palette, non-compressed textures may be in scan order; the bit is ignored
     // otherwise, and a stride texture is always in scan order.
     const bool can_be_linear = !out.vq && !out.indexed();
     out.twiddled = !(can_be_linear && (tcw_scan_order(tcw) != 0 || out.stride));
-    if (out.stride && stride_width != 0)
-        out.width = stride_width;
+    // A stride texture's rows are TEXT_CONTROL's pitch, not the declared width. Keep `width` as
+    // declared: UVs span it, while the decoder walks the narrower rows (Flycast's TexCache does
+    // the same for video frames packed into a wider texture).
+    if (out.stride && !out.twiddled && stride_width != 0)
+        out.row_stride = stride_width;
 
     if (out.format == PixelFormat::Palette4)
         out.palette_base = tcw_palette_select(tcw) << 4;
@@ -283,6 +288,9 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
     std::vector<u32> tx(w), ty(h);
     for (u32 x = 0; x < w; ++x) tx[x] = twiddle_index(x, 0, w, h);
     for (u32 y = 0; y < h; ++y) ty[y] = twiddle_index(0, y, w, h);
+    // Linear textures can be narrower than their declared width: a stride texture's rows are
+    // TEXT_CONTROL's pitch (video frames shown through a wider texture).
+    const u32 pitch = info.twiddled ? w : (info.row_stride != 0 ? info.row_stride : w);
 
     if (info.vq) {
         // The 256-entry codebook sits at the texture's address and the block indices follow it,
@@ -325,11 +333,11 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
 
     switch (info.format) {
         case PixelFormat::Palette4: {
-            if (!in_range(base, w * h / 2))
+            if (!in_range(base, pitch * h / 2))
                 return false;
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; ++x) {
-                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * w + x;
+                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * pitch + x;
                     const u8 byte = vram[base + index / 2];
                     const u32 nibble = (index & 1u) ? (byte >> 4) : (byte & 0xFu);
                     out[static_cast<std::size_t>(y) * w + x] = palette[info.palette_base + nibble];
@@ -337,11 +345,11 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
             return true;
         }
         case PixelFormat::Palette8: {
-            if (!in_range(base, w * h))
+            if (!in_range(base, pitch * h))
                 return false;
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; ++x) {
-                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * w + x;
+                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * pitch + x;
                     out[static_cast<std::size_t>(y) * w + x] =
                         palette[info.palette_base + vram[base + index]];
                 }
@@ -352,14 +360,14 @@ bool decode_texture(const TextureInfo& info, const std::uint8_t* vram, std::size
         case PixelFormat::Rgb565:
         case PixelFormat::Argb4444:
         case PixelFormat::BumpMap: {
-            if (!in_range(base, w * h * 2))
+            if (!in_range(base, pitch * h * 2))
                 return false;
             // Every 16-bit format, YUV included, stores one word per texel at the texel's own
             // position, so the words are gathered into scan order first and converted after.
             std::vector<u16> words(static_cast<std::size_t>(w) * h);
             for (u32 y = 0; y < h; ++y)
                 for (u32 x = 0; x < w; ++x) {
-                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * w + x;
+                    const u32 index = info.twiddled ? (tx[x] | ty[y]) : y * pitch + x;
                     words[static_cast<std::size_t>(y) * w + x] =
                         read16(vram + base + static_cast<std::size_t>(index) * 2);
                 }

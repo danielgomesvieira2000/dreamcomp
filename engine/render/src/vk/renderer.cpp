@@ -106,10 +106,12 @@ static_assert(offsetof(PushConstants, fog_vert) == 32, "push constants must matc
 // What identifies a texture within one frame: the control word, plus the TSP bits that carry the
 // size. Everything the sampler reads is decided per texture in prepare(), so it does not belong
 // here; two polygons that share these bits share the decoded image.
-constexpr std::uint64_t texture_key(const Polygon& p) {
-    // Size bits, plus the sampler bits (TSP 8-18), which choose the descriptor set too.
+constexpr std::uint64_t texture_key(const Polygon& p, std::uint32_t stride_width) {
+    // Size bits, plus the sampler bits (TSP 8-18), which choose the descriptor set too, plus
+    // TEXT_CONTROL's stride, which changes how the rows are read.
     return (static_cast<std::uint64_t>(p.tcw) << 32) | (p.tsp & 0x3Fu) |
-           (static_cast<std::uint64_t>((p.tsp >> 8) & 0x7FFu) << 7);
+           (static_cast<std::uint64_t>((p.tsp >> 8) & 0x7FFu) << 7) |
+           (static_cast<std::uint64_t>(stride_width & 0x7FFu) << 18);
 }
 
 // Parameter control word and TSP fields the fragment shader needs.
@@ -353,6 +355,7 @@ void Renderer::set_memory(const std::uint8_t* vram, std::size_t vram_size,
 // recorded inside one. The descriptor sets are remembered for the draw that follows.
 void Renderer::prepare(VkCommandBuffer upload, const Frame& frame) {
     frame_sets_.clear();
+    const std::uint32_t stride_width = (frame.text_control & 31u) * 32u;
     fallback_set_ = textures_.fallback(upload);
     // Two passes, because whether a texture is addressed with repeat or clamp is a property of
     // every polygon that samples it, not of the first one seen. One strip that genuinely wraps is
@@ -368,13 +371,13 @@ void Renderer::prepare(VkCommandBuffer upload, const Frame& frame) {
         for (const Polygon& p : list) {
             if (!pcw_texture(p.pcw))
                 continue;
-            Use& u = used[texture_key(p)];
+            Use& u = used[texture_key(p, stride_width)];
             u.tcw = p.tcw;
             u.tsp = p.tsp;
             u.tiled = u.tiled || polygon_tiles(frame, p);
         }
     for (const auto& [key, u] : used)
-        frame_sets_[key] = textures_.get(upload, u.tcw, u.tsp, u.tiled);
+        frame_sets_[key] = textures_.get(upload, u.tcw, u.tsp, u.tiled, stride_width);
 }
 
 void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry& geometry,
@@ -383,6 +386,7 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
     drawn_vertices = 0;
     textured_polygons = 0;
     blended_polygons = 0;
+    const std::uint32_t stride_width = (frame.text_control & 31u) * 32u;
     punch_through_polygons = 0;
     if (frame.vertices.empty())
         return;
@@ -540,7 +544,7 @@ void Renderer::draw(VkCommandBuffer cmd, const Frame& frame, const FrameGeometry
         // a flat shape in the right place says more during bring-up than a hole.
         VkDescriptorSet set = VK_NULL_HANDLE;
         if (pcw_texture(p.pcw)) {
-            const auto it = frame_sets_.find(texture_key(p));
+            const auto it = frame_sets_.find(texture_key(p, stride_width));
             if (it != frame_sets_.end())
                 set = it->second;
         }
