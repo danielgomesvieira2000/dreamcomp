@@ -57,6 +57,9 @@ inline constexpr std::uint32_t SR_RB = 1u << 29;
 inline constexpr std::uint32_t SR_MD = 1u << 30;
 
 // FPSCR bit positions (see runtime/fenv.h for RM/DN handling).
+inline constexpr std::uint32_t FPSCR_FLAG_I = 1u << 2;
+inline constexpr std::uint32_t FPSCR_CAUSE_I = 1u << 12;
+inline constexpr std::uint32_t FPSCR_CAUSE = 0x3fu << 12;
 inline constexpr std::uint32_t FPSCR_RM = 0x3u;
 inline constexpr std::uint32_t FPSCR_DN = 1u << 18;
 inline constexpr std::uint32_t FPSCR_PR = 1u << 19;

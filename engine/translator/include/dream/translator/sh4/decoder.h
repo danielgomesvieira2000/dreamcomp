@@ -260,6 +260,9 @@ std::string_view mnemonic(Op op) noexcept;
 // BF/S).
 bool has_delay_slot(Op op) noexcept;
 
+// Scalar floating-point operations that start a new FPSCR cause field.
+bool refreshes_scalar_fp_cause(Op op) noexcept;
+
 // True for anything that transfers control (including conditional branches and TRAPA).
 bool is_control_flow(Op op) noexcept;
 
