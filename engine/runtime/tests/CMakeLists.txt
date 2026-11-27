@@ -1,6 +1,7 @@
 add_executable(dream_runtime_tests
   test_main.cpp
   test_fenv.cpp
+  test_sh4_mac.cpp
   test_memory.cpp
   test_system.cpp
   test_devinterp.cpp
@@ -17,6 +18,12 @@ add_executable(dream_runtime_tests
   test_rtc.cpp
   test_overlay.cpp
 )
+# Two's-complement hosts can return the expected bits even after signed overflow.
+# Trap overflow in the MAC test so the ordinary runtime suite detects a regression.
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" AND NOT MSVC)
+  set_source_files_properties(test_sh4_mac.cpp PROPERTIES
+    COMPILE_OPTIONS "-fsanitize=signed-integer-overflow;-fsanitize-undefined-trap-on-error")
+endif()
 target_include_directories(dream_runtime_tests SYSTEM PRIVATE ${DREAM_ROOT}/third_party/doctest)
 target_link_libraries(dream_runtime_tests PRIVATE dream::runtime)
 target_compile_definitions(dream_runtime_tests PRIVATE

@@ -138,27 +138,32 @@ inline void dmulu(Ctx& c, std::uint32_t rn, std::uint32_t rm) noexcept {
     c.macl = static_cast<std::uint32_t>(p);
 }
 
+// With saturation disabled both MAC instructions accumulate modulo 2^64.
+inline void mac_add_wrapped(Ctx& c, std::int64_t product) noexcept {
+    const std::uint64_t mac = (static_cast<std::uint64_t>(c.mach) << 32) | c.macl;
+    const std::uint64_t sum = mac + static_cast<std::uint64_t>(product);
+    c.mach = static_cast<std::uint32_t>(sum >> 32);
+    c.macl = static_cast<std::uint32_t>(sum);
+}
+
 // MAC.L: MAC += Rm*Rn (signed 32x32->64); with SR.S the result saturates to 48 bits.
 inline void mac_l(Ctx& c, std::int32_t a, std::int32_t b) noexcept {
     const std::int64_t prod = static_cast<std::int64_t>(a) * b;
-    std::int64_t mac =
-        static_cast<std::int64_t>((static_cast<std::uint64_t>(c.mach) << 32) | c.macl);
-    if (c.sr & SR_S) {
-        mac = static_cast<std::int64_t>(static_cast<std::uint64_t>(mac) << 16) >>
-              16;  // 48-bit sign-extend
-        std::int64_t sum = mac + prod;
-        const std::int64_t lo = -(static_cast<std::int64_t>(1) << 47),
-                           hi = (static_cast<std::int64_t>(1) << 47) - 1;
-        if (sum > hi)
-            sum = hi;
-        if (sum < lo)
-            sum = lo;
-        mac = sum;
-    } else {
-        mac += prod;
+    if (!(c.sr & SR_S)) {
+        mac_add_wrapped(c, prod);
+        return;
     }
-    c.mach = static_cast<std::uint32_t>(static_cast<std::uint64_t>(mac) >> 32);
-    c.macl = static_cast<std::uint32_t>(mac);
+    const std::uint64_t bits = (static_cast<std::uint64_t>(c.mach) << 32) | c.macl;
+    const std::int64_t mac = static_cast<std::int64_t>(bits << 16) >> 16;  // 48-bit sign-extend
+    const std::int64_t lo = -(static_cast<std::int64_t>(1) << 47),
+                       hi = (static_cast<std::int64_t>(1) << 47) - 1;
+    std::int64_t sum = mac + prod;
+    if (sum > hi)
+        sum = hi;
+    if (sum < lo)
+        sum = lo;
+    c.mach = static_cast<std::uint32_t>(static_cast<std::uint64_t>(sum) >> 32);
+    c.macl = static_cast<std::uint32_t>(sum);
 }
 
 // MAC.W: MAC += Rm*Rn (signed 16x16->32); with SR.S the low word saturates to 32 bits and MACH
@@ -178,11 +183,7 @@ inline void mac_w(Ctx& c, std::int16_t a, std::int16_t b) noexcept {
             c.macl = static_cast<std::uint32_t>(sum);
         }
     } else {
-        std::int64_t mac =
-            static_cast<std::int64_t>((static_cast<std::uint64_t>(c.mach) << 32) | c.macl);
-        mac += prod;
-        c.mach = static_cast<std::uint32_t>(static_cast<std::uint64_t>(mac) >> 32);
-        c.macl = static_cast<std::uint32_t>(mac);
+        mac_add_wrapped(c, prod);
     }
 }
 
