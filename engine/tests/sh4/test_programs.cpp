@@ -125,6 +125,26 @@ TEST_CASE("p4_calls: bsr/jsr/rts, delay-slot hazards, bra with slot") {
     }
 }
 
+TEST_CASE("p13_live_call: register calls sample the live target before their delay slot") {
+    dream::BareMemory m;
+    load_image(m, "p13_live_call.bin", 0x8C040000);
+    for (const bool relative : {false, true}) {
+        for (const bool redirect : {false, true}) {
+            CAPTURE(relative);
+            CAPTURE(redirect);
+            Ctx c = fresh();
+            const std::uint32_t target = redirect ? 0x8C040034u : 0x8C040030u;
+            c.r[4] = relative ? target - 0x8C040024u : target;
+            if (relative)
+                dream::gen::live_bsrf(c, m);
+            else
+                dream::gen::live_jsr(c, m);
+            CHECK(c.r[0] == (redirect ? 2u : 1u));
+            CHECK(c.r[2] == 0u);
+        }
+    }
+}
+
 TEST_CASE("p5_fpu: single, double via lds fpscr, pair move via fschg") {
     dream::BareMemory m;
     load_image(m, "p5_fpu.bin", 0x8C010000);

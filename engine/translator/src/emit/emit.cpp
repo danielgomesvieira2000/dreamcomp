@@ -985,20 +985,8 @@ private:
             }
             case Op::BSRF:
             case Op::JSR: {
-                // A target loaded from a literal (or immediate) in this block is called directly
-                // when it is a function of this unit; otherwise the register value goes through
-                // the function table at run time.
-                std::uint32_t k = 0;
-                const bool constant = constant_in_register(current_block_start(pc), pc, ins.m, k);
-                const std::uint32_t direct = normalise(ins.op == Op::BSRF ? pc + 4 + k : k);
-                if (constant && known_.count(direct)) {
-                    out << "        c.pr = " << hexu(pc + 4) << ";\n";
-                    emit_slot();
-                    out << "        c.pc = " << hexu(pc) << "; " << call_target_expr(direct)
-                        << "\n";
-                    ++result_.direct_calls;
-                    break;
-                }
+                // Sample the register before the delay slot. A literal-derived target is a
+                // prediction: guest code may have rewritten the pool word since translation.
                 if (ins.op == Op::BSRF)
                     out << "        const std::uint32_t target = " << hexu(pc + 4) << " + "
                         << R(ins.m) << ";\n";
@@ -1006,7 +994,19 @@ private:
                     out << "        const std::uint32_t target = " << R(ins.m) << ";\n";
                 out << "        c.pr = " << hexu(pc + 4) << ";\n";
                 emit_slot();
-                out << "        c.pc = " << hexu(pc) << "; call_indirect(c, m, target);\n";
+                out << "        c.pc = " << hexu(pc) << ";\n";
+                std::uint32_t k = 0;
+                if (constant_in_register(current_block_start(pc), pc, ins.m, k)) {
+                    const std::uint32_t expected = ins.op == Op::BSRF ? pc + 4 + k : k;
+                    if (known_.count(normalise(expected))) {
+                        out << "        if (target == " << hexu(expected) << ") { "
+                            << call_target_expr(expected)
+                            << " } else { call_indirect(c, m, target); }\n";
+                        ++result_.direct_calls;
+                        break;
+                    }
+                }
+                out << "        call_indirect(c, m, target);\n";
                 break;
             }
             case Op::BRAF:
