@@ -9,6 +9,7 @@ set(DREAM_SH4_PROGRAMS
   "p6_switch|p6_switch.bin|0x8c010000|0x8c010000:0x8c01005e:sw"
   "p4_calls|p4_calls.bin|0x8c010000|0x8c010000:0x8c010022:calls 0x8c010022:0x8c010026:inc 0x8c010026:0x8c01002c:dbl"
   "p7_fpuedge|p7_fpuedge.bin|0x8c010000|0x8c010000:0x8c0100f0:fpuedge"
+  "fdiv_status|fdiv_status.bin|0x8c060000|0x8c060000:0x8c06000c:fdiv_status"
   "p8_split|p8_split.bin|0x8c010000|0x8c010000:0x8c010002:split 0x8c010002:0x8c010016:tail"
   "p9_rte|p9_rte.bin|0x8c010000|0x8c010000:0x8c01000c:rtejump 0x8c01000c:0x8c010012:target"
   # Linked at its own base: the non-local return resumes through the function table by address,

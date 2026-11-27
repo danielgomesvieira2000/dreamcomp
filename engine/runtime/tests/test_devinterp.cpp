@@ -114,6 +114,24 @@ TEST_CASE("devinterp: an untranslated interrupt handler runs in bank 1 and its R
     sh4::set_hooks(nullptr);
 }
 
+TEST_CASE("devinterp: FDIV in a return delay slot reports its own cause") {
+    System sys;
+    sys.install();
+    auto& c = sys.ctx;
+    sh4::write_fpscr(c, 0x00040000u);
+    c.fr[0] = 1.0f;
+    c.fr[6] = sh4::u2f(0x4515ffffu);
+    // rts ; fdiv fr6,fr0
+    put(sys.memory, 0x8C020000u, {0x000Bu, 0xF063u});
+    sh4::call_indirect(c, sys.memory, 0x8C030000u);
+    CHECK(sh4::f2u(c.fr[0]) == 0x39da740fu);
+    CHECK(c.fpscr == 0x00041004u);
+    c.fr[6] = 1.0f;
+    sh4::call_indirect(c, sys.memory, 0x8C030000u);
+    CHECK(c.fpscr == 0x00040004u);
+    sh4::set_hooks(nullptr);
+}
+
 TEST_CASE("devinterp: the step limit stops a runaway loop") {
     System sys;
     sys.install();

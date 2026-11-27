@@ -175,6 +175,24 @@ TEST_CASE("p6_switch: braf offset table and jmp address table") {
 // Expected values are the Flycast interpreter's final state for this program, captured by the
 // differential harness on macOS ARM64 (docs/differential-harness.md). Running them here, on every
 // CI host, is the cross-ISA check ADR 16 asks for: a mismatch on x86-64 is a build failure.
+TEST_CASE("FDIV reports rounded single-precision quotients in FPSCR") {
+    dream::BareMemory m;
+    for (unsigned rm : {0u, 1u}) {
+        Ctx c = fresh();
+        const unsigned mode = 0x00040000u | rm;
+        dream::sh4::write_fpscr(c, mode | 0x00008020u);  // previous divide-by-zero cause and flag
+        c.fr[0] = 1.0f;
+        c.fr[6] = dream::sh4::u2f(0x4515ffffu);
+        c.fr[4] = -9.0f;
+        c.fr[5] = 3.0f;
+        dream::gen::fdiv_status(c, m);
+        CHECK(dream::sh4::f2u(c.fr[0]) == 0x39da740fu);
+        CHECK(c.r[0] == (mode | 0x00001024u));
+        CHECK(c.fr[4] == -3.0f);
+        CHECK(c.r[1] == (mode | 0x00000024u));
+    }
+}
+
 TEST_CASE("p7_fpuedge: FPU edge cases match the interpreter's captured state") {
     dream::BareMemory m;
     load_image(m, "p7_fpuedge.bin", 0x8C010000);

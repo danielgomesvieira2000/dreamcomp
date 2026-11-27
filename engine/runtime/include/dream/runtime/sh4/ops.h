@@ -290,6 +290,18 @@ inline void write_pair(::dream::Memory& m, std::uint32_t addr, std::uint64_t v) 
     m.write32(addr + 4, static_cast<std::uint32_t>(v));
 }
 
+// FDIV status for single-precision normal operands (SH-4 Software Manual, 9.30).
+inline float fdiv(Ctx& c, float dividend, float divisor) noexcept {
+    c.fpscr &= ~FPSCR_CAUSE;
+    const float quotient = dividend / divisor;
+    // A binary32 product needs at most 48 significand bits and fits the exponent range
+    // of binary64. Multiplying the rounded quotient back therefore tests exactness.
+    if (std::isnormal(dividend) && std::isnormal(divisor) &&
+        static_cast<double>(quotient) * divisor != dividend)
+        c.fpscr |= FPSCR_CAUSE_I | FPSCR_FLAG_I;
+    return quotient;
+}
+
 // FTRC: truncate toward zero with saturation; NaN gives the negative-overflow pattern.
 inline std::uint32_t ftrc(float f) noexcept {
     if (std::isnan(f))

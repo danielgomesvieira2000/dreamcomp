@@ -1197,7 +1197,8 @@ private:
             case Op::FMUL:
                 return pr ? set_drn(drn + " * " + drm) : frn + " *= " + frm + ";";
             case Op::FDIV:
-                return pr ? set_drn(drn + " / " + drm) : frn + " /= " + frm + ";";
+                return pr ? set_drn(drn + " / " + drm)
+                          : frn + " = fdiv(c, " + frn + ", " + frm + ");";
             case Op::FCMP_EQ:
                 return "c.t = " + (pr ? drn + " == " + drm : frn + " == " + frm) + ";";
             case Op::FCMP_GT:
