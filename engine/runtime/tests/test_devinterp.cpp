@@ -88,6 +88,21 @@ TEST_CASE("devinterp: interpreted code calls a translated function natively and 
     sh4::set_hooks(nullptr);
 }
 
+TEST_CASE("devinterp: rounded FMUL in a return delay slot updates FPSCR") {
+    System sys;
+    sys.install();
+    auto& c = sys.ctx;
+    sh4::write_fpscr(c, 0x00040000u);
+    c.fr[13] = sh4::u2f(0xbf3b399eu);
+    c.fr[0] = sh4::u2f(0xbdcccccdu);
+    // rts ; fmul fr0,fr13
+    put(sys.memory, 0x8C020000u, {0x000Bu, 0xFD02u});
+    sh4::call_indirect(c, sys.memory, 0x8C030000u);
+    CHECK(sh4::f2u(c.fr[13]) == 0x3d95c7b2u);
+    CHECK(c.fpscr == 0x00041004u);
+    sh4::set_hooks(nullptr);
+}
+
 TEST_CASE("devinterp: an untranslated interrupt handler runs in bank 1 and its RTE unwinds") {
     System sys;
     sys.install();

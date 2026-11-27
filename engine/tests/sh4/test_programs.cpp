@@ -50,6 +50,23 @@ TEST_CASE("p1_sum: delayed loop with the add in the slot computes n*n") {
     }
 }
 
+TEST_CASE("FMUL reports an inexact product in both rounding modes") {
+    dream::BareMemory m;
+    for (unsigned rm : {0u, 1u}) {
+        Ctx c = fresh();
+        const unsigned mode = 0x00040000u | rm;
+        dream::sh4::write_fpscr(c, mode | 0x00008020u);  // old divide-by-zero cause and flag
+        c.fr[13] = dream::sh4::u2f(0xbf3b399eu);
+        c.fr[0] = dream::sh4::u2f(0xbdcccccdu);
+        c.fr[4] = -1.5f;
+        dream::gen::fmul_status(c, m);
+        CHECK(dream::sh4::f2u(c.fr[13]) == (rm ? 0x3d95c7b1u : 0x3d95c7b2u));
+        CHECK(c.r[0] == (mode | 0x00001024u));
+        CHECK(c.fr[4] == 2.25f);
+        CHECK(c.r[1] == (mode | 0x00000024u));
+    }
+}
+
 TEST_CASE("p2_alu: division, shifts, carries, rotates, swaps") {
     dream::BareMemory m;
     load_image(m, "p2_alu.bin", 0x8C010000);
