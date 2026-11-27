@@ -333,11 +333,18 @@ inline void fsca(Ctx& c, unsigned n) noexcept {
     c.fr[n + 1] = e.c;
 }
 
+// SH-4 Software Manual section 6.6: both vector instructions report inexact even for
+// exact results. Cause describes this operation, while flags accumulate across operations.
+inline void record_vector_inexact(Ctx& c) noexcept {
+    c.fpscr = (c.fpscr & ~FPSCR_CAUSE) | FPSCR_CAUSE_I | FPSCR_FLAG_I;
+}
+
 // FIPR FVm,FVn: FR[n+3] = dot(FV[m], FV[n]). Products are exact in double (24+24 significand
 // bits), the sum is accumulated in double left to right and rounded to single once: this is the
 // reference (Flycast) evaluation and it is contraction-proof, since an FMA of an exact product
 // equals the separate multiply and add.
 inline void fipr(Ctx& c, unsigned m, unsigned n) noexcept {
+    record_vector_inexact(c);
     const float* a = &c.fr[n];
     const float* b = &c.fr[m];
     double d = static_cast<double>(a[0]) * b[0];
@@ -350,6 +357,7 @@ inline void fipr(Ctx& c, unsigned m, unsigned n) noexcept {
 // FTRV XMTRX,FVn: FV[n] = XMTRX * FV[n], XMTRX being the back bank as a 4x4 column-major matrix.
 // Same double accumulation as FIPR, one row at a time, left to right.
 inline void ftrv(Ctx& c, unsigned n) noexcept {
+    record_vector_inexact(c);
     const float* v = &c.fr[n];
     const float x = v[0], y = v[1], z = v[2], w = v[3];
     const float* xm = c.xf;

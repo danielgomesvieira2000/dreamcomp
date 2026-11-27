@@ -1655,6 +1655,8 @@ private:
             case Op::FMOV_STORE:
             case Op::FMOV_STORE_DEC:
             case Op::FMOV_STORE_R0:
+                if (sh4::refreshes_scalar_fp_cause(ins.op))
+                    return "c.fpscr &= ~FPSCR_CAUSE; " + lower_fp(pc, ins);
                 return lower_fp(pc, ins);
             default:
                 ++result_.unlowered;

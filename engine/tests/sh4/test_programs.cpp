@@ -125,6 +125,23 @@ TEST_CASE("p4_calls: bsr/jsr/rts, delay-slot hazards, bra with slot") {
     }
 }
 
+TEST_CASE("FIPR and FTRV report inexact even for exact unit-vector results") {
+    dream::BareMemory m;
+    Ctx c = fresh();
+    c.fpscr = 0x00048021u;  // stale divide-by-zero cause and sticky flag, DN=1, RM=1
+    c.fr[0] = c.fr[4] = c.fr[12] = 1.0f;
+    for (unsigned i = 0; i < 4; ++i) c.xf[5 * i] = 1.0f;
+    c.r[4] = 0x00040001u;
+    dream::gen::vector_status(c, m);
+    CHECK(c.fr[3] == 1.0f);
+    CHECK(c.fr[4] == 1.0f);
+    CHECK(c.r[0] == 0x00041025u);  // FIPR replaces cause and accumulates flag
+    CHECK(c.r[1] == c.r[0]);        // FMOV and FNEG preserve cause
+    CHECK(c.r[2] == 0x00040025u);  // exact FCMP clears cause, preserves flags
+    CHECK(c.r[3] == 0x00041025u);  // FTRV sets inexact again
+    CHECK(c.fpscr == c.r[4]);       // an explicit FPSCR write can clear the sticky flag
+}
+
 TEST_CASE("p5_fpu: single, double via lds fpscr, pair move via fschg") {
     dream::BareMemory m;
     load_image(m, "p5_fpu.bin", 0x8C010000);

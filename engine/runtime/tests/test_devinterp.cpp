@@ -66,6 +66,19 @@ TEST_CASE(
     sh4::set_hooks(nullptr);
 }
 
+TEST_CASE("devinterp: scalar comparison refreshes the FTRV cause in a return delay slot") {
+    System sys;
+    sys.install();
+    auto& c = sys.ctx;
+    c.fpscr = 0x00040000u;
+    // ftrv xmtrx,fv4 ; sts fpscr,r2 ; rts ; fcmp/eq fr0,fr0
+    put(sys.memory, 0x8C020000u, {0xF5FDu, 0x026Au, 0x000Bu, 0xF004u});
+    sh4::call_indirect(c, sys.memory, 0x8C030000u);
+    CHECK(c.r[2] == 0x00041004u);
+    CHECK(c.fpscr == 0x00040004u);
+    sh4::set_hooks(nullptr);
+}
+
 TEST_CASE("devinterp: interpreted code calls a translated function natively and resumes") {
     System sys;
     sys.install();

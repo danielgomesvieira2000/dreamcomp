@@ -707,6 +707,26 @@ std::string_view mnemonic(Op op) noexcept {
     return "?";
 }
 
+bool refreshes_scalar_fp_cause(Op op) noexcept {
+    switch (op) {
+        case Op::FADD:
+        case Op::FSUB:
+        case Op::FMUL:
+        case Op::FDIV:
+        case Op::FCMP_EQ:
+        case Op::FCMP_GT:
+        case Op::FMAC:
+        case Op::FLOAT:
+        case Op::FTRC:
+        case Op::FSQRT:
+        case Op::FCNVSD:
+        case Op::FCNVDS:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool has_delay_slot(Op op) noexcept {
     switch (op) {
         case Op::BRA:

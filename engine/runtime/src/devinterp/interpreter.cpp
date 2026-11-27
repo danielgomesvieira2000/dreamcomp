@@ -74,6 +74,7 @@ struct Machine {
     void exec_fp(std::uint32_t pc, const Instr& ins) {
         using namespace sh4;
         const unsigned n = ins.n, mm = ins.m;
+        if (refreshes_scalar_fp_cause(ins.op)) c.fpscr &= ~FPSCR_CAUSE;
         const bool pr = (c.fpscr & FPSCR_PR) != 0, sz = (c.fpscr & FPSCR_SZ) != 0;
         float& frn = c.fr[n];
         float& frm = c.fr[mm];
