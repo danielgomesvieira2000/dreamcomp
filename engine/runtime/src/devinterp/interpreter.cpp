@@ -116,7 +116,7 @@ struct Machine {
                 if (pr)
                     set_dr(c, dn, get_dr(c, dn) * get_dr(c, dm));
                 else
-                    frn *= frm;
+                    frn = fmul(c, frn, frm);
                 break;
             case Op::FDIV:
                 if (pr)

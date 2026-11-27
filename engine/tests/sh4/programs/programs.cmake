@@ -7,6 +7,7 @@ set(DREAM_SH4_PROGRAMS
   "p3_mem|p3_mem.bin|0x8c010000|0x8c010000:0x8c010034:mem"
   "p5_fpu|p5_fpu.bin|0x8c010000|0x8c010000:0x8c010068:fpu"
   "p6_switch|p6_switch.bin|0x8c010000|0x8c010000:0x8c01005e:sw"
+  "fmul_status|fmul_status.bin|0x8c070000|0x8c070000:0x8c07000c:fmul_status"
   "p4_calls|p4_calls.bin|0x8c010000|0x8c010000:0x8c010022:calls 0x8c010022:0x8c010026:inc 0x8c010026:0x8c01002c:dbl"
   "p7_fpuedge|p7_fpuedge.bin|0x8c010000|0x8c010000:0x8c0100f0:fpuedge"
   "p8_split|p8_split.bin|0x8c010000|0x8c010000:0x8c010002:split 0x8c010002:0x8c010016:tail"

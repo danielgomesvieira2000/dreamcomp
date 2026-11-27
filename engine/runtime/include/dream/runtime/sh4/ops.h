@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 #include "dream/runtime/fenv.h"
 #include "dream/runtime/memory.h"
@@ -308,6 +309,23 @@ inline std::uint32_t ftrc(double d) noexcept {
     if (d <= -2147483648.0)
         return 0x80000000u;
     return static_cast<std::uint32_t>(static_cast<std::int32_t>(d));
+}
+
+// FMUL status for single-precision normal operands (SH-4 Software Manual, section 9.39).
+inline float fmul(Ctx& c, float lhs, float rhs) noexcept {
+    c.fpscr &= ~FPSCR_CAUSE;
+    const float result = lhs * rhs;
+    // The exact product of two finite binary32 operands fits in binary64, including its
+    // exponent. Compare the guest's rounded result without consulting host exception flags.
+    if (std::isnormal(lhs) && std::isnormal(rhs)) {
+        const double exact = static_cast<double>(lhs) * rhs;
+        // Range exceptions also have their own cause and DN-specific handling.
+        const double magnitude = std::abs(exact);
+        if (magnitude >= std::numeric_limits<float>::min() &&
+            magnitude <= std::numeric_limits<float>::max() && exact != result)
+            c.fpscr |= FPSCR_CAUSE_I | FPSCR_FLAG_I;
+    }
+    return result;
 }
 
 // FMAC: FRn = FR0 * FRm + FRn with a single rounding (the SH-4 FMAC is a fused unit). Recorded
