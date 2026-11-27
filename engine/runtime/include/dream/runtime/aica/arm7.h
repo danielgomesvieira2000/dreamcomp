@@ -119,7 +119,7 @@ private:
     ArmBus& bus_;
     RegPair r_[RN_ARM_REG_COUNT]{};
     bool n_flag_ = false, z_flag_ = false, c_flag_ = false, v_flag_ = false;
-    bool irq_enable_ = true, fiq_enable_ = false, enabled_ = false;
+    bool irq_enable_ = false, fiq_enable_ = false, enabled_ = false;
     int mode_ = 0x13;
     int ticks_ = 0;
     // e68k latch
