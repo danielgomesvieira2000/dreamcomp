@@ -1,6 +1,7 @@
 add_executable(dream_runtime_tests
   test_main.cpp
   test_fenv.cpp
+  test_sh4_mac.cpp
   test_memory.cpp
   test_system.cpp
   test_devinterp.cpp
