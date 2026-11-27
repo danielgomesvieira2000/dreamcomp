@@ -37,6 +37,20 @@ constexpr std::uint32_t kHalt = 0xEAFFFFFEu;  // b .
 
 }  // namespace
 
+TEST_CASE("arm7: MRS sees both interrupt masks after each reset release") {
+    Rig r;
+    // mrs r10,cpsr; bic r0,r10,#0xc0; msr cpsr_c,r0; mrs r1,cpsr; b .
+    r.load({0xE10FA000u, 0xE3CA00C0u, 0xE121F000u, 0xE10F1000u, kHalt});
+    for (unsigned release = 0; release < 2; ++release) {
+        r.release_arm();
+        r.aica.arm.run(100);
+        CHECK((r.aica.arm.reg(10) & 0xDFu) == 0xD3u);
+        CHECK((r.aica.arm.reg(1) & 0xDFu) == 0x13u);
+        using A = dream::aica::Aica;
+        r.aica.write(A::kRegBase + A::kArmRst, 1, 1);
+    }
+}
+
 TEST_CASE("arm7: data processing and flags") {
     Rig r;
     // mov r0,#5; mov r1,#7; add r2,r0,r1; subs r3,r2,#12; b .

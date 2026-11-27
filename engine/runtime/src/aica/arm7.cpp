@@ -251,7 +251,7 @@ void Arm7::reset() {
     r_[13].I = 0x03007F00u;
     r_[R13_IRQ].I = 0x03007FA0u;
     r_[R13_SVC].I = 0x03007FE0u;
-    irq_enable_ = true;
+    irq_enable_ = false;  // ARM7DI reset masks both IRQ and FIQ (DDI 0027D, section 3.5).
     fiq_enable_ = false;
     n_flag_ = z_flag_ = c_flag_ = v_flag_ = false;
     update_intc();
