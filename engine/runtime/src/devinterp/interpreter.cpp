@@ -122,7 +122,7 @@ struct Machine {
                 if (pr)
                     set_dr(c, dn, get_dr(c, dn) / get_dr(c, dm));
                 else
-                    frn /= frm;
+                    frn = fdiv(c, frn, frm);
                 break;
             case Op::FCMP_EQ:
                 c.t = pr ? (get_dr(c, dn) == get_dr(c, dm)) : (frn == frm);
